@@ -1,78 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-type BaeminSales = {
-  prepaid: number;
-  card: number;
-  cash: number;
-  baeminOne: number;
-  baeminOneOrders: number;
-};
-
-type CoupangEatsSales = {
-  sales: number;
-  orders: number;
-};
-
-type YogiyoSales = {
-  prepaid: number;
-  card: number;
-  cash: number;
-  yogiDelivery: number;
-  yogiDeliveryOrders: number;
-};
-
-type DdangyoSales = {
-  prepaid: number;
-};
-
-type GeneralSales = {
-  card: number;
-  cash: number;
-  bankTransfer: number;
-};
-
-const EMPTY_BAEMIN: BaeminSales = {
-  prepaid: 0,
-  card: 0,
-  cash: 0,
-  baeminOne: 0,
-  baeminOneOrders: 0,
-};
-
-const EMPTY_COUPANG_EATS: CoupangEatsSales = {
-  sales: 0,
-  orders: 0,
-};
-
-const EMPTY_YOGIYO: YogiyoSales = {
-  prepaid: 0,
-  card: 0,
-  cash: 0,
-  yogiDelivery: 0,
-  yogiDeliveryOrders: 0,
-};
-
-const EMPTY_DDANGYO: DdangyoSales = {
-  prepaid: 0,
-};
-
-const EMPTY_GENERAL: GeneralSales = {
-  card: 0,
-  cash: 0,
-  bankTransfer: 0,
-};
+import type { SalesSettlementSummary } from "@/lib/settlement/calculate-sales-settlement";
+import { getSalesSettlementFromStorage } from "@/lib/settlement/get-sales-settlement-from-storage";
+import type { SettlementResult } from "@/types/settlement";
 
 function formatMoney(value: number) {
-  return `${value.toLocaleString("ko-KR")}원`;
+  const safeValue = Number.isFinite(value) ? value : 0;
+
+  return `${safeValue.toLocaleString("ko-KR")}원`;
 }
 
 type PlatformCardProps = {
   name: string;
   description: string;
-  amount: number;
+  settlement: SettlementResult;
   status: "completed" | "not-started";
   href?: string;
 };
@@ -80,7 +24,7 @@ type PlatformCardProps = {
 function PlatformCard({
   name,
   description,
-  amount,
+  settlement,
   status,
   href,
 }: PlatformCardProps) {
@@ -115,11 +59,31 @@ function PlatformCard({
 
         <p className="mt-1 text-sm text-slate-500">{description}</p>
 
-        {isCompleted && (
-          <p className="mt-2 font-bold text-slate-900">
-            {formatMoney(amount)}
+        <div className="mt-4 rounded-2xl bg-slate-50 px-4 py-3">
+          <p className="text-xs font-semibold text-indigo-500">
+            예상 정산금액
           </p>
-        )}
+
+          <p className="mt-1 text-xl font-bold tracking-tight text-indigo-700">
+            {formatMoney(settlement.expectedSettlement)}
+          </p>
+
+          <div className="mt-3 space-y-1.5 border-t border-slate-200 pt-3 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-slate-500">총매출</span>
+              <span className="shrink-0 font-semibold text-slate-700">
+                {formatMoney(settlement.grossSales)}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-slate-500">예상 공제액</span>
+              <span className="shrink-0 font-semibold text-slate-700">
+                {formatMoney(settlement.expectedDeduction)}
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
 
       {href && (
@@ -142,135 +106,36 @@ function PlatformCard({
 }
 
 export default function SalesPage() {
-  const [baemin, setBaemin] = 
-    useState<BaeminSales>(EMPTY_BAEMIN);
-  
-  const [coupangEats, setCoupangEats] =
-    useState<CoupangEatsSales>(EMPTY_COUPANG_EATS);
-  
-  const [yogiyo, setYogiyo] =
-    useState<YogiyoSales>(EMPTY_YOGIYO);
-  
-  const [ddangyo, setDdangyo] =
-    useState<DdangyoSales>(EMPTY_DDANGYO);
-
-  const [general, setGeneral] =
-    useState<GeneralSales>(EMPTY_GENERAL);
-
-  const [isLoaded, setIsLoaded] = useState(false);
+  const [summary, setSummary] =
+    useState<SalesSettlementSummary | null>(null);
 
   /* eslint-disable react-hooks/set-state-in-effect -- LocalStorage hydration runs only after the client mounts. */
   useEffect(() => {
-    const savedBaemin = window.localStorage.getItem("sales-baemin");
-
-    if (savedBaemin) {
-      try {
-        const parsedBaemin = JSON.parse(savedBaemin) as BaeminSales;
-        setBaemin(parsedBaemin);
-      } catch {
-        window.localStorage.removeItem("sales-baemin");
-      }
-    }
-
-    const savedCoupangEats = window.localStorage.getItem(
-      "sales-coupang-eats",
-    );
-
-    if (savedCoupangEats) {
-      try {
-        const parsedCoupangEats = JSON.parse(
-          savedCoupangEats,
-        ) as CoupangEatsSales;
-
-        setCoupangEats(parsedCoupangEats);
-      } catch {
-        window.localStorage.removeItem("sales-coupang-eats");
-      }
-    }
-
-    const savedYogiyo = window.localStorage.getItem("sales-yogiyo");
-
-    if (savedYogiyo) {
-      try {
-        const parsedYogiyo = JSON.parse(savedYogiyo) as YogiyoSales;
-        setYogiyo(parsedYogiyo);
-      } catch {
-        window.localStorage.removeItem("sales-yogiyo");
-      }
-    }
-
-    const savedDdangyo =
-      window.localStorage.getItem("sales-ddangyo");
-
-    if (savedDdangyo) {
-      try {
-        const parsedDdangyo =
-          JSON.parse(savedDdangyo) as DdangyoSales;
-
-        setDdangyo(parsedDdangyo);
-      } catch {
-        window.localStorage.removeItem("sales-ddangyo");
-      }
-    }
-
-    const savedGeneral =
-      window.localStorage.getItem("sales-general");
-
-    if (savedGeneral) {
-      try {
-        const parsedGeneral =
-          JSON.parse(savedGeneral) as GeneralSales;
-
-        setGeneral(parsedGeneral);
-      } catch {
-        window.localStorage.removeItem("sales-general");
-      }
-    }
-
-  setIsLoaded(true);
-}, []);
+    setSummary(getSalesSettlementFromStorage());
+  }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  const baeminTotal = useMemo(() => {
+  if (!summary) {
     return (
-      baemin.prepaid +
-      baemin.card +
-      baemin.cash +
-      baemin.baeminOne
+      <main className="flex min-h-screen items-center justify-center bg-slate-100">
+        <p className="text-sm font-medium text-slate-500">
+          정산 정보를 불러오는 중
+        </p>
+      </main>
     );
-  }, [baemin]);
+  }
 
-  const coupangEatsTotal = Number(coupangEats.sales ?? 0);
+  const baeminSettlement = summary.platforms.baemin;
+  const coupangEatsSettlement = summary.platforms["coupang-eats"];
+  const yogiyoSettlement = summary.platforms.yogiyo;
+  const ddangyoSettlement = summary.platforms.ddangyo;
+  const generalSettlement = summary.platforms.general;
 
-  const yogiyoTotal = useMemo(() => {
-    return (
-      yogiyo.prepaid +
-      yogiyo.card +
-      yogiyo.cash +
-      yogiyo.yogiDelivery
-    );
-  }, [yogiyo]);
-
-  const ddangyoTotal =
-    ddangyo.prepaid;
-
-  const generalTotal =
-    Number(general.card ?? 0) +
-    Number(general.cash ?? 0) +
-    Number(general.bankTransfer ?? 0);
-
-  const totalSales =
-    baeminTotal +
-    coupangEatsTotal +
-    yogiyoTotal +
-    ddangyoTotal +
-    generalTotal;
-
-  const isBaeminCompleted = baeminTotal > 0;
-  const isCoupangEatsCompleted = coupangEatsTotal > 0;
-  const isYogiyoCompleted = yogiyoTotal > 0;
-  const isDdangyoCompleted = ddangyoTotal > 0;
-  const isGeneralCompleted = generalTotal > 0;
+  const isBaeminCompleted = baeminSettlement.grossSales > 0;
+  const isCoupangEatsCompleted = coupangEatsSettlement.grossSales > 0;
+  const isYogiyoCompleted = yogiyoSettlement.grossSales > 0;
+  const isDdangyoCompleted = ddangyoSettlement.grossSales > 0;
+  const isGeneralCompleted = generalSettlement.grossSales > 0;
 
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-5">
@@ -298,20 +163,43 @@ export default function SalesPage() {
         </header>
 
         <section className="mt-7 rounded-3xl bg-indigo-50 p-5">
-          <p className="text-sm font-medium text-indigo-500">
-            현재 입력된 총매출
+          <p className="text-sm font-semibold text-indigo-500">
+            오늘 매출 정산 예상
           </p>
 
-          <p className="mt-2 text-3xl font-bold tracking-tight text-indigo-700">
-            {isLoaded ? formatMoney(totalSales) : "불러오는 중"}
-          </p>
+          <div className="mt-4 space-y-3">
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-sm text-slate-600">전체 총매출</span>
+              <span className="shrink-0 font-bold text-slate-800">
+                {formatMoney(summary.total.grossSales)}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-sm text-slate-600">
+                전체 예상 공제액
+              </span>
+              <span className="shrink-0 font-bold text-slate-800">
+                {formatMoney(summary.total.expectedDeduction)}
+              </span>
+            </div>
+
+            <div className="border-t border-indigo-100 pt-4">
+              <p className="text-sm font-semibold text-indigo-500">
+                전체 예상 정산금액
+              </p>
+              <p className="mt-1 text-3xl font-bold tracking-tight text-indigo-700">
+                {formatMoney(summary.total.expectedSettlement)}
+              </p>
+            </div>
+          </div>
         </section>
 
         <section className="mt-6 space-y-3">
           <PlatformCard
             name="배달의민족"
             description="선결제 · 카드 · 현금 · 배민원"
-            amount={baeminTotal}
+            settlement={baeminSettlement}
             status={isBaeminCompleted ? "completed" : "not-started"}
             href="/closing/sales/baemin"
           />
@@ -319,7 +207,7 @@ export default function SalesPage() {
           <PlatformCard
             name="쿠팡이츠"
             description="매출 · 주문 수"
-            amount={coupangEatsTotal}
+            settlement={coupangEatsSettlement}
             status={
               isCoupangEatsCompleted ? "completed" : "not-started"
             }
@@ -329,7 +217,7 @@ export default function SalesPage() {
           <PlatformCard
             name="요기요"
             description="선결제 · 카드 · 현금 · 요기배달"
-            amount={yogiyoTotal}
+            settlement={yogiyoSettlement}
             status={
               isYogiyoCompleted ? "completed" : "not-started"
             }
@@ -339,7 +227,7 @@ export default function SalesPage() {
           <PlatformCard
             name="땡겨요"
             description="선결제"
-            amount={ddangyoTotal}
+            settlement={ddangyoSettlement}
             status={
               isDdangyoCompleted
                 ? "completed"
@@ -351,7 +239,7 @@ export default function SalesPage() {
           <PlatformCard
             name="일반결제"
             description="카드 · 현금 · 계좌이체"
-            amount={generalTotal}
+            settlement={generalSettlement}
             status={
               isGeneralCompleted ? "completed" : "not-started"
             }

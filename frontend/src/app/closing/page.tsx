@@ -3,14 +3,16 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import type { SalesSettlementSummary } from "@/lib/settlement/calculate-sales-settlement";
+import { getSalesSettlementFromStorage } from "@/lib/settlement/get-sales-settlement-from-storage";
+import type { SettlementResult } from "@/types/settlement";
+
 type ClosingStatus = {
   salesConfirmed: boolean;
   expensesConfirmed: boolean;
   deliveryConfirmed: boolean;
   closingCompleted: boolean;
 };
-
-type SalesValues = Record<string, number>;
 
 const INITIAL_STATUS: ClosingStatus = {
   salesConfirmed: false,
@@ -20,45 +22,20 @@ const INITIAL_STATUS: ClosingStatus = {
 };
 
 function formatMoney(value: number) {
-  return `${value.toLocaleString("ko-KR")}원`;
-}
+  const safeValue = Number.isFinite(value) ? value : 0;
 
-function readStorageObject(key: string): SalesValues {
-  const saved = window.localStorage.getItem(key);
-
-  if (!saved) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(saved) as SalesValues;
-  } catch {
-    window.localStorage.removeItem(key);
-    return {};
-  }
+  return `${safeValue.toLocaleString("ko-KR")}원`;
 }
 
 function readBoolean(key: string) {
   return window.localStorage.getItem(key) === "true";
 }
 
-function calculatePlatformTotal(
-  values: SalesValues,
-  excludedKeys: string[] = [],
-) {
-  return Object.entries(values).reduce((total, [key, value]) => {
-    if (excludedKeys.includes(key)) {
-      return total;
-    }
-
-    return total + Number(value ?? 0);
-  }, 0);
-}
-
 type ClosingItemProps = {
   title: string;
   description: string;
   amount?: string;
+  settlement?: SettlementResult;
   completed: boolean;
   href: string;
   actionLabel: string;
@@ -68,6 +45,7 @@ function ClosingItem({
   title,
   description,
   amount,
+  settlement,
   completed,
   href,
   actionLabel,
@@ -114,7 +92,33 @@ function ClosingItem({
             </span>
           </div>
 
-          {amount && (
+          {settlement ? (
+            <div className="mt-4 rounded-2xl bg-white/70 px-4 py-3">
+              <p className="text-xs font-semibold text-indigo-500">
+                예상 정산금액
+              </p>
+
+              <p className="mt-1 text-xl font-bold tracking-tight text-indigo-700">
+                {formatMoney(settlement.expectedSettlement)}
+              </p>
+
+              <div className="mt-3 space-y-1.5 border-t border-slate-200 pt-3 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-slate-500">총매출</span>
+                  <span className="shrink-0 font-semibold text-slate-700">
+                    {formatMoney(settlement.grossSales)}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-slate-500">예상 공제액</span>
+                  <span className="shrink-0 font-semibold text-slate-700">
+                    {formatMoney(settlement.expectedDeduction)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ) : amount ? (
             <p
               className={`mt-3 text-xl font-bold ${
                 completed ? "text-emerald-700" : "text-slate-950"
@@ -122,7 +126,7 @@ function ClosingItem({
             >
               {amount}
             </p>
-          )}
+          ) : null}
         </div>
 
         <span className="mt-3 shrink-0 text-2xl text-slate-300">›</span>
@@ -133,40 +137,15 @@ function ClosingItem({
 
 export default function ClosingPage() {
   const [status, setStatus] = useState<ClosingStatus>(INITIAL_STATUS);
-  const [salesTotal, setSalesTotal] = useState(0);
+  const [salesSummary, setSalesSummary] =
+    useState<SalesSettlementSummary | null>(null);
   const [expenseTotal, setExpenseTotal] = useState(0);
   const [deliveryBalance, setDeliveryBalance] = useState(0);
   const [isLoaded, setIsLoaded] = useState(false);
 
   /* eslint-disable react-hooks/set-state-in-effect -- LocalStorage hydration runs only after the client mounts. */
   useEffect(() => {
-    const baemin = readStorageObject("sales-baemin");
-    const coupangEats = readStorageObject("sales-coupang-eats");
-    const yogiyo = readStorageObject("sales-yogiyo");
-    const ddangyo = readStorageObject("sales-ddangyo");
-    const general = readStorageObject("sales-general");
-
-    const baeminTotal = calculatePlatformTotal(baemin, [
-      "baeminOneOrders",
-    ]);
-
-    const coupangTotal = calculatePlatformTotal(coupangEats, ["orders"]);
-
-    const yogiyoTotal = calculatePlatformTotal(yogiyo, [
-      "yogiDeliveryOrders",
-    ]);
-
-    const ddangyoTotal = calculatePlatformTotal(ddangyo);
-
-    const generalTotal = calculatePlatformTotal(general);
-
-    setSalesTotal(
-      baeminTotal +
-        coupangTotal +
-        yogiyoTotal +
-        ddangyoTotal +
-        generalTotal,
-    );
+    setSalesSummary(getSalesSettlementFromStorage());
 
     const savedExpenseTotal = Number(
       window.localStorage.getItem("closing-expense-total") ?? 0,
@@ -246,7 +225,7 @@ export default function ClosingPage() {
     }));
   }
 
-  if (!isLoaded) {
+  if (!isLoaded || !salesSummary) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-slate-100">
         <p className="text-sm font-medium text-slate-500">
@@ -255,6 +234,8 @@ export default function ClosingPage() {
       </main>
     );
   }
+
+  const salesTotal = salesSummary.total.grossSales;
 
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-5">
@@ -358,7 +339,7 @@ export default function ClosingPage() {
           <ClosingItem
             title="매출"
             description="플랫폼별 매출을 입력하고 확인합니다."
-            amount={formatMoney(salesTotal)}
+            settlement={salesSummary.total}
             completed={status.salesConfirmed}
             href="/closing/sales"
             actionLabel="확인 필요"
