@@ -34,6 +34,7 @@ export default function SalesPlatformForm({
   const [isLoaded, setIsLoaded] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- LocalStorage hydration runs only after the client mounts. */
   useEffect(() => {
     const saved = window.localStorage.getItem(config.storageKey);
 
@@ -52,6 +53,7 @@ export default function SalesPlatformForm({
 
     setIsLoaded(true);
   }, [config]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const totalSales = useMemo(() => {
     return config.fields

@@ -28,6 +28,12 @@ type DdangyoSales = {
   prepaid: number;
 };
 
+type GeneralSales = {
+  card: number;
+  cash: number;
+  bankTransfer: number;
+};
+
 const EMPTY_BAEMIN: BaeminSales = {
   prepaid: 0,
   card: 0,
@@ -51,6 +57,12 @@ const EMPTY_YOGIYO: YogiyoSales = {
 
 const EMPTY_DDANGYO: DdangyoSales = {
   prepaid: 0,
+};
+
+const EMPTY_GENERAL: GeneralSales = {
+  card: 0,
+  cash: 0,
+  bankTransfer: 0,
 };
 
 function formatMoney(value: number) {
@@ -142,8 +154,12 @@ export default function SalesPage() {
   const [ddangyo, setDdangyo] =
     useState<DdangyoSales>(EMPTY_DDANGYO);
 
+  const [general, setGeneral] =
+    useState<GeneralSales>(EMPTY_GENERAL);
+
   const [isLoaded, setIsLoaded] = useState(false);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- LocalStorage hydration runs only after the client mounts. */
   useEffect(() => {
     const savedBaemin = window.localStorage.getItem("sales-baemin");
 
@@ -197,8 +213,23 @@ export default function SalesPage() {
       }
     }
 
+    const savedGeneral =
+      window.localStorage.getItem("sales-general");
+
+    if (savedGeneral) {
+      try {
+        const parsedGeneral =
+          JSON.parse(savedGeneral) as GeneralSales;
+
+        setGeneral(parsedGeneral);
+      } catch {
+        window.localStorage.removeItem("sales-general");
+      }
+    }
+
   setIsLoaded(true);
 }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const baeminTotal = useMemo(() => {
     return (
@@ -223,16 +254,23 @@ export default function SalesPage() {
   const ddangyoTotal =
     ddangyo.prepaid;
 
+  const generalTotal =
+    Number(general.card ?? 0) +
+    Number(general.cash ?? 0) +
+    Number(general.bankTransfer ?? 0);
+
   const totalSales =
     baeminTotal +
     coupangEatsTotal +
     yogiyoTotal +
-    ddangyoTotal;
+    ddangyoTotal +
+    generalTotal;
 
   const isBaeminCompleted = baeminTotal > 0;
   const isCoupangEatsCompleted = coupangEatsTotal > 0;
   const isYogiyoCompleted = yogiyoTotal > 0;
   const isDdangyoCompleted = ddangyoTotal > 0;
+  const isGeneralCompleted = generalTotal > 0;
 
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-5">
@@ -313,8 +351,11 @@ export default function SalesPage() {
           <PlatformCard
             name="일반결제"
             description="카드 · 현금 · 계좌이체"
-            amount={0}
-            status="not-started"
+            amount={generalTotal}
+            status={
+              isGeneralCompleted ? "completed" : "not-started"
+            }
+            href="/closing/sales/general"
           />
         </section>
 

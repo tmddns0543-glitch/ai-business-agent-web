@@ -138,6 +138,7 @@ export default function ClosingPage() {
   const [deliveryBalance, setDeliveryBalance] = useState(0);
   const [isLoaded, setIsLoaded] = useState(false);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- LocalStorage hydration runs only after the client mounts. */
   useEffect(() => {
     const baemin = readStorageObject("sales-baemin");
     const coupangEats = readStorageObject("sales-coupang-eats");
@@ -187,6 +188,7 @@ export default function ClosingPage() {
 
     setIsLoaded(true);
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const completedCount = useMemo(() => {
     return [

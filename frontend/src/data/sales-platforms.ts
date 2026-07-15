@@ -117,3 +117,31 @@ export const DDANGYO_CONFIG: SalesPlatformConfig = {
     },
   ],
 };
+
+
+export const GENERAL_CONFIG: SalesPlatformConfig = {
+  platformKey: "general",
+  title: "일반결제",
+  description: "매장에서 직접 결제된 매출을 입력해주세요.",
+  storageKey: "sales-general",
+  fields: [
+    {
+      key: "card",
+      label: "카드 매출",
+      description: "매장에서 카드로 결제된 매출",
+      type: "money",
+    },
+    {
+      key: "cash",
+      label: "현금 매출",
+      description: "매장에서 현금으로 결제된 매출",
+      type: "money",
+    },
+    {
+      key: "bankTransfer",
+      label: "계좌이체 매출",
+      description: "매장 계좌로 이체받은 매출",
+      type: "money",
+    },
+  ],
+};
