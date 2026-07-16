@@ -10,9 +10,9 @@ export type SalesFieldConfig = {
 export type SalesFormValues = Record<string, number>;
 
 export type SalesPlatformConfig = {
-  platformKey: string;
+  platformKey: SettlementPlatformId;
   title: string;
   description: string;
-  storageKey: string;
   fields: SalesFieldConfig[];
 };
+import type { SettlementPlatformId } from "@/types/settlement";

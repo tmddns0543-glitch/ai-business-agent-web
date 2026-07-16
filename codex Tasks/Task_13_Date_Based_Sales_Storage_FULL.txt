@@ -1,0 +1,337 @@
+AI Business Agent 2세대 웹서비스의 다음 구현 Task를 진행해줘.
+
+이번 Task에서는 기존의 날짜 없는 플랫폼 매출 저장 구조를 폐기하고, 선택 영업일별 매출 저장 구조로 전환한다.
+
+현재 저장된 매출 데이터는 모두 개발용 임시값이므로 삭제되어도 괜찮다. 기존 sales-* 데이터를 새 날짜로 이전하거나 보존하는 마이그레이션은 만들지 않는다.
+
+수수료 설정과 공통 정산 계산 엔진은 그대로 유지한다.
+
+# 이번 Task의 핵심 목표
+
+/closing에서 영업일 선택
+→ 플랫폼 매출 입력
+→ 선택 영업일 기준 저장
+→ 다른 영업일 선택 시 해당 날짜 매출 조회
+→ 해당 날짜 기준 예상 공제액·예상 정산금액 계산
+→ /closing/sales와 /closing에 동일 결과 표시
+
+# 반드시 먼저 읽을 파일
+
+frontend/src/types/business-day.ts
+frontend/src/lib/storage/business-day-storage.ts
+frontend/src/types/settlement.ts
+frontend/src/data/sales-platforms.ts
+frontend/src/components/sales/sales-platform-form.tsx
+frontend/src/app/closing/page.tsx
+frontend/src/app/closing/sales/page.tsx
+frontend/src/app/closing/sales/baemin/page.tsx
+frontend/src/app/closing/sales/coupang-eats/page.tsx
+frontend/src/app/closing/sales/yogiyo/page.tsx
+frontend/src/app/closing/sales/ddangyo/page.tsx
+frontend/src/app/closing/sales/general/page.tsx
+frontend/src/lib/settlement/map-sales-to-settlement-items.ts
+frontend/src/lib/settlement/calculate-sales-settlement.ts
+frontend/src/lib/settlement/get-sales-settlement-from-storage.ts
+frontend/src/lib/storage/fee-settings-storage.ts
+
+현재 플랫폼별 폼의 실제 저장 구조, 필드명, 저장 후 이동 경로와 완료 판정 방식을 먼저 정확히 확인한다.
+
+# 기존 데이터 처리 원칙
+
+기존 임시 key:
+sales-baemin
+sales-coupang-eats
+sales-yogiyo
+sales-ddangyo
+sales-general
+
+위 key의 데이터는 모두 삭제 가능하다. 마이그레이션은 만들지 않는다.
+
+다음 key는 절대 삭제하거나 변경하지 않는다:
+business-day-context
+business-fee-settings
+closing-sales-confirmed
+closing-expenses-confirmed
+closing-delivery-confirmed
+closing-completed
+
+완료 상태는 아직 날짜별로 변경하지 않는다.
+
+# 1. 날짜별 매출 타입
+
+생성 파일:
+frontend/src/types/sales-by-business-day.ts
+
+권장 개념:
+
+import type { BusinessDate } from "@/types/business-day";
+import type { StoredSalesByPlatform } from "@/lib/settlement/map-sales-to-settlement-items";
+
+export interface BusinessDaySalesStorageData {
+  version: 1;
+  days: Partial<Record<BusinessDate, StoredSalesByPlatform>>;
+}
+
+원칙:
+- 하나의 영업일은 5개 플랫폼 매출 객체를 가짐
+- 기존 플랫폼별 필드명 유지
+- 입력 구조 변경 금지
+
+# 2. 날짜별 매출 저장소
+
+생성 파일:
+frontend/src/lib/storage/sales-by-business-day-storage.ts
+
+공식 LocalStorage key:
+business-day-sales
+
+export const BUSINESS_DAY_SALES_STORAGE_KEY = "business-day-sales";
+
+저장 예시:
+
+{
+  "version": 1,
+  "days": {
+    "2026-07-16": {
+      "baemin": {
+        "prepaid": 100000,
+        "card": 50000,
+        "cash": 20000,
+        "baeminOne": 80000,
+        "baeminOneOrders": 10
+      },
+      "coupang-eats": {
+        "sales": 100000,
+        "orders": 10
+      },
+      "yogiyo": {},
+      "ddangyo": {},
+      "general": {}
+    }
+  }
+}
+
+구현 함수:
+- getBusinessDaySalesStorage()
+- getSalesByBusinessDate(businessDate)
+- getPlatformSalesByBusinessDate(businessDate, platformId)
+- savePlatformSalesByBusinessDate(businessDate, platformId, sales)
+- 필요 시 clearLegacySalesStorage()
+
+요구사항:
+- 특정 날짜/플랫폼 저장 시 다른 날짜와 다른 플랫폼 보존
+- 저장 성공 여부 boolean 반환
+- 서버 환경 안전
+- 깨진 JSON, 잘못된 version, 잘못된 구조 안전 처리
+- 입력 객체 변경 금지
+- 항상 새 객체 반환
+
+# 3. SalesPlatformForm 전환
+
+수정 파일:
+frontend/src/components/sales/sales-platform-form.tsx
+
+기존 sales-* 저장 방식을 제거한다.
+
+새 저장 흐름:
+getSelectedBusinessDate()
+→ getPlatformSalesByBusinessDate()
+→ 폼 초기값 복원
+→ savePlatformSalesByBusinessDate()
+
+선택 날짜에 데이터가 없으면 빈값 또는 기존 0 초기 상태를 표시한다.
+
+저장 후 기존 이동 경로를 유지한다.
+
+/closing에서 날짜를 바꾼 뒤 플랫폼 입력 화면에 들어가면 해당 날짜 데이터만 보여야 한다.
+
+# 4. 정산 어댑터 전환
+
+수정 파일:
+frontend/src/lib/settlement/get-sales-settlement-from-storage.ts
+
+기존 sales-* 직접 조회 로직을 제거한다.
+
+새 흐름:
+getSelectedBusinessDate()
+→ getSalesByBusinessDate(selectedBusinessDate)
+→ getBusinessFeeSettings()
+→ calculateSalesSettlement()
+→ SalesSettlementSummary
+
+필요하면 다음 함수를 추가한다:
+getSalesSettlementByBusinessDate(businessDate)
+
+중복 계산식과 매핑식은 작성하지 않는다.
+
+# 5. /closing/sales 연결
+
+필요한 경우 최소 수정:
+frontend/src/app/closing/sales/page.tsx
+
+현재 선택 영업일 기준으로:
+- 플랫폼별 총매출
+- 플랫폼별 예상 공제액
+- 플랫폼별 예상 정산금액
+- 전체 총매출
+- 전체 예상 공제액
+- 전체 예상 정산금액
+
+이 표시되어야 한다.
+
+기존 카드 디자인과 매출 확인 완료 버튼은 변경하지 않는다.
+
+# 6. /closing 연결
+
+필요한 경우 최소 수정:
+frontend/src/app/closing/page.tsx
+
+날짜 선택 직후 매출 카드 숫자도 해당 날짜 기준으로 즉시 갱신되어야 한다.
+
+날짜 state 변경을 의존성으로 사용하거나, 날짜 변경 handler에서 summary를 재조회한다.
+
+마감 완료 상태와 진행률은 아직 전역 key를 유지하므로 이번 Task에서 변경하지 않는다.
+
+# 7. 기존 임시 key 제거
+
+다음 key만 제거 가능:
+sales-baemin
+sales-coupang-eats
+sales-yogiyo
+sales-ddangyo
+sales-general
+
+localStorage.clear() 금지.
+
+business-day-sales 정상 동작 확인 후 기존 key만 정리한다.
+
+반복 삭제 로직을 제품 코드에 남기지 않는다.
+
+완료 보고에서 어떤 방식으로 제거했는지 설명한다.
+
+# 8. 필수 테스트
+
+1. 빈 저장소
+- 모든 플랫폼 0
+- 전체 총매출 0
+- 예상 공제액 0
+- 예상 정산금액 0
+
+2. 2026-07-16 배민 저장
+- prepaid 100000
+- card 50000
+- cash 20000
+- baeminOne 80000
+- baeminOneOrders 10
+- 배민 총매출 250000
+- 정산 결과 정상
+
+3. 2026-07-17 선택
+- 7월16일 값 표시 금지
+- 빈값 표시
+- 다른 값 저장 후 두 날짜 독립 유지
+
+4. 날짜 재선택
+- 7월16일 값 복원
+- 7월17일 값 복원
+
+5. 같은 날짜 5개 플랫폼 저장
+- 공식 13개 채널 매핑
+- 플랫폼별 합계
+- 전체 합계
+- 주문 수 비합산
+
+6. /closing/sales 날짜별 숫자 변경 확인
+
+7. /closing 날짜 선택 직후 매출 카드 즉시 변경 확인
+
+8. 수수료 설정 변경
+- 날짜별 매출 원본 불변
+- 정산 결과만 변경
+
+9. 깨진 JSON
+business-day-sales = "{broken"
+- 예외 없음
+- 빈 매출 처리
+
+10. 기존 key 제거 확인
+- sales-baemin
+- sales-coupang-eats
+- sales-yogiyo
+- sales-ddangyo
+- sales-general
+
+다음은 유지:
+- business-day-context
+- business-fee-settings
+- closing-sales-confirmed
+- closing-expenses-confirmed
+- closing-delivery-confirmed
+- closing-completed
+
+11. 서버 환경
+- window 없음
+- 예외 없음
+- build 성공
+
+12. 모바일
+- 기존 입력 UX 유지
+- 저장 버튼 정상
+- 날짜 표시 정상
+- 가로 스크롤 없음
+
+# 9. 코드 품질
+
+- any 사용 금지
+- 기존 필드명 변경 금지
+- 수수료 계산식 중복 금지
+- 매출 매핑식 중복 금지
+- localStorage.clear() 금지
+- business-fee-settings 삭제 금지
+- 서버 환경 localStorage 접근 금지
+- console.log 제품 코드 금지
+- 새 패키지 설치 금지
+
+# 10. 검증 명령
+
+cd frontend
+npm run lint
+npm run build
+
+브라우저에서 최소 두 날짜의 매출 분리 테스트를 수행한다.
+
+# 완료 후 보고 형식
+
+1. 생성한 파일
+2. 수정한 파일
+3. 날짜별 매출 저장 구조와 JSON 예시
+4. 구현한 저장소 함수
+5. 플랫폼 폼 저장·복원 흐름
+6. 정산 계산 흐름
+7. 두 날짜 분리 테스트 결과
+8. 기존 임시 key 처리 방식
+9. 기존 기능 영향
+10. lint 및 build 결과
+11. 남은 한계
+12. 다음 Task 예상 파일
+
+남은 한계에 반드시 명시:
+- 마감 완료 상태는 아직 날짜별이 아님
+- 비용 기능은 아직 없음
+- 배달대행사도 아직 날짜별 원장이 없음
+
+# 매우 중요한 제한
+
+이번 Task에서는 절대로 다음을 하지 마라.
+
+- 비용 타입 생성
+- 비용 저장소 생성
+- 비용 화면 생성
+- 날짜별 완료 상태 구현
+- 배달대행사 구현
+- 월말 재고 구현
+- 정산 계산 엔진 변경
+- 수수료 기본값 변경
+- 플랫폼 입력 필드 변경
+
+이번 Task의 목적은 기존 임시 매출 저장을 폐기하고, 선택 영업일별 매출 저장과 정산 조회를 완성하는 것이다.

@@ -4,7 +4,6 @@ export const BAEMIN_CONFIG: SalesPlatformConfig = {
   platformKey: "baemin",
   title: "배달의민족",
   description: "배달의민족에서 확인한 매출을 입력해주세요.",
-  storageKey: "sales-baemin",
   fields: [
     {
       key: "prepaid",
@@ -44,7 +43,6 @@ export const COUPANG_EATS_CONFIG: SalesPlatformConfig = {
   platformKey: "coupang-eats",
   title: "쿠팡이츠",
   description: "쿠팡이츠 매출과 주문 수를 입력해주세요.",
-  storageKey: "sales-coupang-eats",
   fields: [
     {
       key: "sales",
@@ -66,7 +64,6 @@ export const YOGIYO_CONFIG: SalesPlatformConfig = {
   platformKey: "yogiyo",
   title: "요기요",
   description: "요기요에서 확인한 매출을 입력해주세요.",
-  storageKey: "sales-yogiyo",
   fields: [
     {
       key: "prepaid",
@@ -106,7 +103,6 @@ export const DDANGYO_CONFIG: SalesPlatformConfig = {
   platformKey: "ddangyo",
   title: "땡겨요",
   description: "땡겨요에서 확인한 매출을 입력해주세요.",
-  storageKey: "sales-ddangyo",
 
   fields: [
     {
@@ -123,7 +119,6 @@ export const GENERAL_CONFIG: SalesPlatformConfig = {
   platformKey: "general",
   title: "일반결제",
   description: "매장에서 직접 결제된 매출을 입력해주세요.",
-  storageKey: "sales-general",
   fields: [
     {
       key: "card",

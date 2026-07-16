@@ -4,7 +4,17 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import type { SalesSettlementSummary } from "@/lib/settlement/calculate-sales-settlement";
+import {
+  calculateExpectedSettlementRate,
+  formatExpectedSettlementRate,
+} from "@/lib/settlement/calculate-settlement-rate";
 import { getSalesSettlementFromStorage } from "@/lib/settlement/get-sales-settlement-from-storage";
+import { getSelectedBusinessDate } from "@/lib/storage/business-day-storage";
+import { setSectionConfirmed } from "@/lib/storage/closing-status-by-business-day-storage";
+import {
+  formatBusinessDate,
+  type BusinessDate,
+} from "@/types/business-day";
 import type { SettlementResult } from "@/types/settlement";
 
 function formatMoney(value: number) {
@@ -29,6 +39,10 @@ function PlatformCard({
   href,
 }: PlatformCardProps) {
   const isCompleted = status === "completed";
+  const expectedSettlementRate = calculateExpectedSettlementRate(
+    settlement.grossSales,
+    settlement.expectedSettlement,
+  );
 
   const content = (
     <div className="flex items-center gap-4 rounded-3xl border border-slate-200 bg-white p-5 transition hover:border-indigo-200 hover:shadow-sm">
@@ -67,6 +81,13 @@ function PlatformCard({
           <p className="mt-1 text-xl font-bold tracking-tight text-indigo-700">
             {formatMoney(settlement.expectedSettlement)}
           </p>
+
+          <div className="mt-2 flex items-center justify-between gap-3 text-sm">
+            <span className="text-slate-500">예상 정산율</span>
+            <span className="shrink-0 font-bold text-indigo-600">
+              {formatExpectedSettlementRate(expectedSettlementRate)}
+            </span>
+          </div>
 
           <div className="mt-3 space-y-1.5 border-t border-slate-200 pt-3 text-sm">
             <div className="flex items-center justify-between gap-3">
@@ -108,14 +129,16 @@ function PlatformCard({
 export default function SalesPage() {
   const [summary, setSummary] =
     useState<SalesSettlementSummary | null>(null);
+  const [businessDate, setBusinessDate] = useState<BusinessDate | null>(null);
 
   /* eslint-disable react-hooks/set-state-in-effect -- LocalStorage hydration runs only after the client mounts. */
   useEffect(() => {
+    setBusinessDate(getSelectedBusinessDate());
     setSummary(getSalesSettlementFromStorage());
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  if (!summary) {
+  if (!summary || !businessDate) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-slate-100">
         <p className="text-sm font-medium text-slate-500">
@@ -136,6 +159,11 @@ export default function SalesPage() {
   const isYogiyoCompleted = yogiyoSettlement.grossSales > 0;
   const isDdangyoCompleted = ddangyoSettlement.grossSales > 0;
   const isGeneralCompleted = generalSettlement.grossSales > 0;
+  const totalExpectedSettlementRate = calculateExpectedSettlementRate(
+    summary.total.grossSales,
+    summary.total.expectedSettlement,
+  );
+  const hasSales = summary.total.grossSales > 0;
 
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-5">
@@ -150,7 +178,7 @@ export default function SalesPage() {
           </Link>
 
           <p className="mt-5 text-sm font-medium text-slate-500">
-            2026년 7월 12일
+            {formatBusinessDate(businessDate)}
           </p>
 
           <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950">
@@ -160,6 +188,10 @@ export default function SalesPage() {
           <p className="mt-2 text-sm leading-6 text-slate-500">
             입력할 플랫폼을 선택해주세요.
           </p>
+
+          <p className="mt-1 text-xs leading-5 text-slate-400">
+            /closing에서 선택한 영업일입니다.
+          </p>
         </header>
 
         <section className="mt-7 rounded-3xl bg-indigo-50 p-5">
@@ -168,6 +200,22 @@ export default function SalesPage() {
           </p>
 
           <div className="mt-4 space-y-3">
+            <div>
+              <p className="text-sm font-semibold text-indigo-500">
+                전체 예상 정산금액
+              </p>
+              <p className="mt-1 text-3xl font-bold tracking-tight text-indigo-700">
+                {formatMoney(summary.total.expectedSettlement)}
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between gap-4 border-t border-indigo-100 pt-3">
+              <span className="text-sm text-slate-600">전체 예상 정산율</span>
+              <span className="shrink-0 font-bold text-indigo-700">
+                {formatExpectedSettlementRate(totalExpectedSettlementRate)}
+              </span>
+            </div>
+
             <div className="flex items-center justify-between gap-4">
               <span className="text-sm text-slate-600">전체 총매출</span>
               <span className="shrink-0 font-bold text-slate-800">
@@ -184,14 +232,6 @@ export default function SalesPage() {
               </span>
             </div>
 
-            <div className="border-t border-indigo-100 pt-4">
-              <p className="text-sm font-semibold text-indigo-500">
-                전체 예상 정산금액
-              </p>
-              <p className="mt-1 text-3xl font-bold tracking-tight text-indigo-700">
-                {formatMoney(summary.total.expectedSettlement)}
-              </p>
-            </div>
           </div>
         </section>
 
@@ -250,12 +290,16 @@ export default function SalesPage() {
         <button
           type="button"
           onClick={() => {
-            window.localStorage.setItem("closing-sales-confirmed", "true");
-            window.location.href = "/closing";
+            if (setSectionConfirmed(businessDate, "sales")) {
+              window.location.href = "/closing";
+            } else {
+              window.alert("매출 확인 상태를 저장하지 못했습니다.");
+            }
           }}
-          className="mt-7 w-full rounded-2xl bg-indigo-600 px-4 py-4 text-center text-base font-bold text-white transition hover:bg-indigo-700 active:scale-[0.99]"
+          disabled={!hasSales}
+          className="mt-7 w-full rounded-2xl bg-indigo-600 px-4 py-4 text-center text-base font-bold text-white transition hover:bg-indigo-700 active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
         >
-          매출 확인 완료
+          {hasSales ? "매출 확인 완료" : "입력된 매출이 없습니다."}
         </button>
 
         <nav className="fixed bottom-4 left-1/2 flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 justify-around rounded-2xl border border-slate-200 bg-white px-3 py-3 shadow-lg">

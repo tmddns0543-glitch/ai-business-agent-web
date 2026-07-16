@@ -1,0 +1,718 @@
+AI Business Agent 2세대 웹서비스의 다음 구현 Task를 진행해줘.
+
+이번 Task에서는 비용 기능의 첫 번째 화면인 `/closing/expenses` 메인 화면을 구현한다.
+
+이번 Task의 구현 범위:
+
+1. 선택 영업일 기준 비용 메인 화면 생성
+2. 비용 카테고리별 거래 건수·합계 표시
+3. 오늘 운영비용·실제 세금 납부·오늘 총 현금 지출·예상 매입세액 표시
+4. 날짜별 비용 메모 조회·저장
+5. 비용 확인 완료 처리
+6. 오늘 발생한 비용 없음 처리
+7. `/closing` 비용 카드에 날짜별 비용 합계와 상태 반영
+8. 비용 상태를 `unconfirmed | confirmed-with-data | confirmed-none`으로 확장
+
+이번 Task에서는 카테고리별 실제 입력 화면은 만들지 않는다.
+
+즉, `/closing/expenses` 메인 화면과 마감 상태 연결까지만 구현한다.
+
+# 반드시 먼저 읽을 파일
+
+다음 파일을 먼저 확인해라.
+
+frontend/src/types/business-day.ts
+frontend/src/types/expense.ts
+frontend/src/types/expense-storage.ts
+frontend/src/types/closing-status-by-business-day.ts
+
+frontend/src/data/expense-default-items.ts
+
+frontend/src/lib/storage/business-day-storage.ts
+frontend/src/lib/storage/expense-by-business-day-storage.ts
+frontend/src/lib/storage/daily-expense-memo-storage.ts
+frontend/src/lib/storage/closing-status-by-business-day-storage.ts
+
+frontend/src/lib/expense/calculate-expense-summary.ts
+frontend/src/lib/expense/get-expense-summary-from-storage.ts
+
+frontend/src/app/closing/page.tsx
+frontend/src/app/closing/sales/page.tsx
+
+현재 `/closing` 비용 카드의 링크, 상태 배지, 금액 표시, 진행률 계산 구조를 정확히 확인한 뒤 작업한다.
+
+# 1. 비용 상태 타입 확장
+
+수정 파일:
+
+frontend/src/types/closing-status-by-business-day.ts
+
+현재 비용 상태가 `unconfirmed | confirmed`라면 비용 섹션만 다음 세 상태를 표현할 수 있도록 확장한다.
+
+권장 타입:
+
+export type ExpenseClosingStatus =
+  | "unconfirmed"
+  | "confirmed-with-data"
+  | "confirmed-none";
+
+매출과 배달대행 상태는 기존 구조를 유지한다.
+
+권장 방향:
+
+export type ConfirmableSectionStatus =
+  | "unconfirmed"
+  | "confirmed";
+
+export type ExpenseClosingStatus =
+  | "unconfirmed"
+  | "confirmed-with-data"
+  | "confirmed-none";
+
+export interface BusinessDayClosingStatus {
+  salesStatus: ConfirmableSectionStatus;
+  expenseStatus: ExpenseClosingStatus;
+  deliveryStatus: ConfirmableSectionStatus;
+  closingStatus: FinalClosingStatus;
+  completedAt: string | null;
+  updatedAt: string;
+}
+
+기존 저장 데이터의 `expenseStatus: "confirmed"`가 있을 수 있다면 개발용 임시값이므로 다음 중 하나를 선택한다.
+
+- 잘못된 값으로 보고 `unconfirmed`로 복구
+- 또는 `"confirmed"`를 `"confirmed-with-data"`로 안전하게 해석
+
+현재 데이터가 테스트용이므로 가장 단순하고 안전한 방식을 선택하고 완료 보고에서 설명한다.
+
+# 2. 날짜별 마감 상태 저장소 확장
+
+수정 파일:
+
+frontend/src/lib/storage/closing-status-by-business-day-storage.ts
+
+다음 함수 또는 동일 역할의 함수를 추가한다.
+
+setExpenseConfirmedWithData(businessDate)
+
+- expenseStatus를 confirmed-with-data로 변경
+- closingStatus는 유지
+- updatedAt 갱신
+
+setExpenseConfirmedNone(businessDate)
+
+- expenseStatus를 confirmed-none으로 변경
+- closingStatus는 유지
+- updatedAt 갱신
+
+setExpenseUnconfirmed(businessDate)
+
+- expenseStatus를 unconfirmed로 변경
+- closingStatus를 open으로 변경
+- completedAt null
+- updatedAt 갱신
+
+기존 generic `setSectionConfirmed()` 구조가 있다면 비용만 별도 분기할 수 있도록 안전하게 확장한다.
+
+# 3. 비용 메인 화면 생성
+
+다음 파일을 생성한다.
+
+frontend/src/app/closing/expenses/page.tsx
+
+필요하면 `"use client"`를 사용한다.
+
+화면은 현재 정리한 얇고 단정한 모바일 UI 스타일을 따른다.
+
+기존 `/closing`의 카드 밀도와 radius, spacing, typography를 참고한다.
+
+# 4. 상단 구조
+
+상단에는 다음만 표시한다.
+
+뒤로가기
+비용
+선택 영업일 표시
+
+예:
+
+비용
+
+2026년 7월 16일 영업일
+
+날짜 선택 input은 추가하지 않는다.
+
+날짜 변경은 `/closing`에서만 한다.
+
+선택 영업일은:
+
+getSelectedBusinessDate()
+
+로 조회한다.
+
+# 5. 카테고리 카드
+
+공식 비용 그룹 순서대로 6개 카드를 표시한다.
+
+1. 원재료 매입
+2. 플랫폼 비용
+3. 공과금·고정비
+4. 일반 운영비
+5. 인건비
+6. 세금 납부
+
+각 카드에는 다음을 표시한다.
+
+- 그룹명
+- 짧은 설명
+- 거래 건수
+- 그룹 합계
+- 이동 화살표
+- 상태 또는 미입력 표시
+
+예:
+
+원재료 매입
+거래처별 매입 기록
+3건 · 550,000원
+>
+
+그룹 거래가 0건이면:
+
+0원
+미입력
+
+또는:
+
+입력 없음
+
+표시한다.
+
+# 6. 카테고리 카드 링크
+
+이번 Task에서는 실제 카테고리 입력 화면을 만들지 않는다.
+
+따라서 아직 존재하지 않는 경로로 이동해 404가 발생하면 안 된다.
+
+다음 중 하나를 선택한다.
+
+권장 방식:
+
+- 카드는 클릭 가능한 디자인을 유지하되
+- 아직 미구현 상태임을 표시하고
+- 링크는 넣지 않는다.
+
+표시 예:
+
+입력 화면 준비 중
+
+또는:
+
+준비 중
+
+단, 다음 Task에서 원재료 입력 화면부터 연결할 수 있도록 컴포넌트 구조는 확장 가능하게 만든다.
+
+# 7. 날짜별 비용 데이터 조회
+
+마운트 후 다음을 조회한다.
+
+- getSelectedBusinessDate()
+- getExpensesByBusinessDate(businessDate)
+- calculateExpenseSummary(transactions)
+- getDailyExpenseMemo(businessDate)
+- getClosingStatusByBusinessDate(businessDate)
+
+이 데이터를 state에 저장한다.
+
+화면은 hydration mismatch 없이 동작해야 한다.
+
+# 8. 그룹별 거래 건수와 합계
+
+각 그룹별로 다음을 계산한다.
+
+- transactionCount
+- signed amount total
+
+`transactionType` 부호 규칙을 사용한다.
+
+- expense: +
+- refund: -
+- cancellation: -
+
+그룹별 합계 계산을 화면에서 중복 구현하지 않는다.
+
+기존 `calculateExpenseSummary()`와 `byGroup`를 재사용한다.
+
+그룹별 건수 helper가 없다면 작은 순수 helper를 추가할 수 있다.
+
+가능한 파일:
+
+frontend/src/lib/expense/calculate-expense-group-summary.ts
+
+또는 기존 calculate-expense-summary.ts 확장.
+
+불필요한 파일 생성은 피한다.
+
+# 9. 하단 비용 요약
+
+화면 하단에 다음 정보를 표시한다.
+
+오늘 운영비용
+실제 세금 납부
+오늘 총 현금 지출
+예상 매입세액
+
+표시 예:
+
+오늘 운영비용       1,080,000원
+실제 세금 납부              0원
+오늘 총 현금 지출    1,080,000원
+예상 매입세액          31,818원
+
+정보 중요도:
+
+1. 오늘 총 현금 지출
+2. 오늘 운영비용
+3. 실제 세금 납부
+4. 예상 매입세액
+
+예상 매입세액은 보조정보로 작게 표시한다.
+
+정확한 신고세액으로 오해하지 않도록 다음 안내를 추가한다.
+
+현재 입력 기준 단순 예상치입니다.
+
+# 10. 비용 메모
+
+비용 메인 화면 하단에 날짜별 공통 메모 입력 영역을 둔다.
+
+제목:
+
+비용 메모
+
+입력:
+
+textarea
+
+버튼:
+
+메모 저장
+
+동작:
+
+saveDailyExpenseMemo(businessDate, memo)
+
+저장 성공 시:
+
+메모를 저장했습니다.
+
+저장 실패 시:
+
+메모를 저장하지 못했습니다. 다시 시도해주세요.
+
+빈 문자열 저장 시 기존 저장소 규칙대로 해당 날짜 메모를 제거한다.
+
+원재료 거래별 메모와 이 메모는 별개다.
+
+# 11. 비용 확인 완료
+
+비용 거래가 하나 이상 있고 총 현금 지출 또는 운영비용이 0이 아니어도 거래 건수 기준으로 확인 가능하게 한다.
+
+권장 조건:
+
+transactions.length > 0
+
+버튼 문구:
+
+비용 확인 완료
+
+클릭 시:
+
+setExpenseConfirmedWithData(businessDate)
+→ 상태 재조회
+→ /closing 이동
+
+거래가 하나도 없으면 이 버튼은 비활성화하거나 숨긴다.
+
+# 12. 오늘 발생한 비용 없음
+
+거래가 0건일 때 다음 버튼을 표시한다.
+
+오늘 발생한 비용 없음
+
+클릭 시:
+
+setExpenseConfirmedNone(businessDate)
+→ 상태 재조회
+→ /closing 이동
+
+거래가 하나 이상 있으면 이 버튼은 숨기거나 비활성화한다.
+
+비용 없음 확인은 비용 거래를 생성하지 않는다.
+
+# 13. 비용 상태 표시
+
+현재 expenseStatus에 따라 상단 또는 하단에 상태를 표시한다.
+
+unconfirmed
+→ 확인 필요
+
+confirmed-with-data
+→ 완료
+
+confirmed-none
+→ 없음 확인
+
+권장 배지 문구:
+
+- 확인 필요
+- 완료
+- 없음 확인
+
+사용자에게 내부 status 문자열을 노출하지 않는다.
+
+# 14. 완료 상태에서 데이터 변화 가능성
+
+이번 Task에서는 카테고리 입력 화면이 없으므로 실제 거래 변경 후 상태 해제는 아직 발생하지 않는다.
+
+다만 향후 거래가 추가·수정·삭제되면:
+
+setExpenseUnconfirmed(businessDate)
+
+또는 closingStatus reopen 정책을 적용할 예정임을 코드 주석 또는 완료 보고에 명시한다.
+
+이번 Task에서는 화면 없는 미래 기능을 과도하게 구현하지 않는다.
+
+# 15. /closing 비용 카드 연결
+
+수정 파일:
+
+frontend/src/app/closing/page.tsx
+
+기존 비용 카드가 아직 임시 `closing-expense-total` 값을 사용한다면 이를 제거하고 날짜별 비용 요약을 사용한다.
+
+선택 날짜 기준:
+
+getExpenseSummaryByBusinessDate(selectedBusinessDate)
+
+또는 기존 summary adapter 사용.
+
+비용 카드에 표시:
+
+오늘 총 현금 지출 또는 오늘 운영비용
+
+권장 표시:
+
+비용
+오늘 운영비용 1,080,000원
+실제 세금 납부 0원
+
+카드 내부 정보가 너무 많아지지 않도록 현재 얇은 UI를 유지한다.
+
+최소 표시:
+
+- 오늘 운영비용
+- 실제 세금 납부
+- 상태 배지
+
+# 16. /closing 비용 카드 배지 규칙
+
+선택 영업일의 expenseStatus 기준:
+
+unconfirmed
+→ 확인 필요
+
+confirmed-with-data
+→ 완료
+
+confirmed-none
+→ 없음 확인
+
+비용 거래가 있는데 expenseStatus가 confirmed-none이면 비정상 상태다.
+
+화면 안전 규칙:
+
+transactions.length > 0 && expenseStatus === confirmed-none
+→ 확인 필요로 표시
+
+또는 저장 상태를 자동 수정하지 않고 화면만 안전하게 표시.
+
+완료 보고에서 선택한 정책을 설명한다.
+
+# 17. 진행률 계산 수정
+
+현재 진행률 계산에서 expenseStatus가 단순 confirmed인지 확인하고 있을 수 있다.
+
+다음 두 상태 모두 비용 완료로 계산한다.
+
+- confirmed-with-data
+- confirmed-none
+
+즉:
+
+expenseCompleted =
+  expenseStatus === "confirmed-with-data"
+  || expenseStatus === "confirmed-none"
+
+매출과 배달대행 진행률 규칙은 변경하지 않는다.
+
+최종 마감은 이미 조건 없이 가능하므로 진행률은 안내 정보로만 유지한다.
+
+# 18. 최종 마감 안내의 미확인 항목 수
+
+`/closing`의 미확인 항목 수 계산에서도 비용 완료는 다음 두 상태를 모두 인정한다.
+
+- confirmed-with-data
+- confirmed-none
+
+비용이 없음 확인 상태인데 미확인으로 계산되면 안 된다.
+
+# 19. 직접 주소 접근
+
+`/closing/expenses` 직접 접근 시에도 선택 영업일을 기준으로 정상 조회해야 한다.
+
+선택 영업일 저장값이 없거나 잘못된 경우 기존 business-day storage fallback을 사용한다.
+
+# 20. 화면 UI 원칙
+
+현재 `/closing`에서 정리한 디자인 방향을 따른다.
+
+- max-w-md
+- rounded-xl
+- 과도한 중첩 카드 금지
+- 카드 padding 과도하게 크게 하지 않음
+- 카드 간격 8~12px 수준
+- 큰 흰 박스 안의 또 다른 흰 박스 금지
+- 금액은 우측 정렬 또는 명확한 시각 계층
+- 긴 금액에서 가로 스크롤 금지
+- 하단 버튼이 내비게이션에 가리지 않게 충분한 여백
+
+# 21. 필수 브라우저 테스트
+
+## 테스트 1: 빈 날짜
+
+선택 날짜에 거래 없음.
+
+확인:
+
+- 6개 카테고리 모두 0원
+- 오늘 운영비용 0원
+- 세금 납부 0원
+- 총 현금 지출 0원
+- 예상 매입세액 0원
+- 오늘 발생한 비용 없음 버튼 표시
+- 비용 확인 완료 버튼 비활성 또는 숨김
+
+## 테스트 2: 비용 없음 확인
+
+거래 없음 상태에서 `오늘 발생한 비용 없음` 클릭.
+
+확인:
+
+- expenseStatus confirmed-none
+- /closing 이동
+- 비용 카드 배지 `없음 확인`
+- 진행률에서 비용 완료 인정
+
+## 테스트 3: 거래 있음
+
+메모리 LocalStorage 또는 직접 데이터로 다음 거래 저장:
+
+- 원재료 매입 350,000원
+- 플랫폼 광고비 30,000원
+- 전기세 420,000원
+- 세금 납부 100,000원
+
+확인:
+
+- 그룹별 건수·합계
+- 운영비용 800,000원
+- 세금 납부 100,000원
+- 총 현금 지출 900,000원
+- 비용 확인 완료 버튼 표시
+- 비용 없음 버튼 숨김
+
+## 테스트 4: 비용 확인 완료
+
+거래 있음 상태에서 비용 확인 완료 클릭.
+
+확인:
+
+- expenseStatus confirmed-with-data
+- /closing 이동
+- 비용 카드 배지 완료
+- 진행률 반영
+
+## 테스트 5: 메모 저장
+
+메모 입력 후 저장.
+
+확인:
+
+- 날짜별 저장
+- 새로고침 후 유지
+- 다른 날짜 메모와 분리
+
+## 테스트 6: 날짜 분리
+
+7월 16일 거래·메모·상태 저장.
+
+7월 17일 선택 후 `/closing/expenses` 진입.
+
+확인:
+
+- 거래 0
+- 메모 없음
+- 상태 unconfirmed
+
+7월 16일 재선택 시 기존 값 복원.
+
+## 테스트 7: refund/cancellation
+
+환급 또는 취소 거래가 있을 때 합계가 음수로 반영되는지 확인한다.
+
+## 테스트 8: 마감 화면 연결
+
+/closing 비용 카드에서 선택 날짜의:
+
+- 운영비용
+- 세금 납부
+- 상태 배지
+- 진행률
+
+이 일치하는지 확인한다.
+
+## 테스트 9: 잘못된 JSON
+
+비용 거래·메모·마감 상태 저장값이 깨져 있어도 화면 오류 없이 0원·기본 상태로 표시.
+
+## 테스트 10: 모바일
+
+- 카드 밀도 적절
+- 6개 카드 스크롤 가능
+- 하단 버튼 가림 없음
+- textarea와 버튼 터치 가능
+- 가로 스크롤 없음
+
+# 22. 기존 기능 비간섭
+
+이번 Task에서 변경하지 않는다.
+
+- 플랫폼 매출 입력
+- 날짜별 매출 저장소
+- 정산 계산 엔진
+- 수수료 설정
+- 예상 정산율
+- 매출 확인 완료
+- 배달대행사 로직
+- Home
+- 경영성과
+- 더보기
+
+# 23. 절대 구현하지 말 것
+
+이번 Task에서는 다음을 구현하지 않는다.
+
+- 원재료 매입 입력 화면
+- 플랫폼 비용 입력 화면
+- 공과금·고정비 입력 화면
+- 일반 운영비 입력 화면
+- 인건비 입력 화면
+- 세금 납부 입력 화면
+- 사용자 정의 항목 추가 UI
+- 거래처 자동완성
+- OCR 업로드
+- 예상 매입세액 계산식 자동 생성
+- 재고 연결
+- 예상 세금 화면
+
+# 24. 코드 품질
+
+- any 사용 금지
+- 기존 summary 함수 재사용
+- LocalStorage 직접 접근 중복 금지
+- 상태 문자열 하드코딩 최소화
+- hydration mismatch 방지
+- console.log 제품 코드 금지
+- 새 패키지 설치 금지
+- 불필요한 대규모 리팩터링 금지
+
+# 25. 검증 명령
+
+작업 후 실행한다.
+
+cd frontend
+npm run lint
+npm run build
+
+# 완료 후 보고 형식
+
+## 1. 생성한 파일
+
+실제 경로
+
+## 2. 수정한 파일
+
+실제 경로와 역할
+
+## 3. 비용 상태 확장
+
+unconfirmed / confirmed-with-data / confirmed-none
+
+## 4. 비용 메인 화면 구조
+
+상단·카테고리 카드·요약·메모·확인 버튼
+
+## 5. 그룹별 합계 표시
+
+건수와 금액
+
+## 6. 비용 없음 확인
+
+동작과 상태 저장
+
+## 7. 비용 확인 완료
+
+동작과 상태 저장
+
+## 8. /closing 비용 카드 연결
+
+금액·배지·진행률
+
+## 9. 날짜별 분리 테스트
+
+두 날짜 결과
+
+## 10. 메모 저장 테스트
+
+결과
+
+## 11. 기존 기능 영향
+
+수정하지 않은 영역
+
+## 12. lint 및 build
+
+결과
+
+## 13. 남은 한계
+
+반드시 명시:
+
+- 카테고리별 실제 비용 입력 화면은 아직 없음
+- 원재료 예상 매입세액 자동 계산은 아직 없음
+- 사용자 정의 항목 UI는 아직 없음
+- 거래 변경 시 비용 확인 상태 자동 해제는 카테고리 입력 화면 구현 때 연결 예정
+- 재고 연결 전 원재료 매입은 임시로 운영비용 취급
+
+## 14. 다음 Task
+
+원재료 매입 입력 화면 구현에 필요한 예상 파일만 제안한다.
+
+아직 다른 카테고리 입력 화면은 구현하지 않는다.
+
+# 매우 중요한 제한
+
+이번 Task의 목적은 날짜별 비용 요약·메모·비용 확인 상태를 화면에 연결하는 것이다.
+
+카테고리별 입력 화면은 만들지 않는다.

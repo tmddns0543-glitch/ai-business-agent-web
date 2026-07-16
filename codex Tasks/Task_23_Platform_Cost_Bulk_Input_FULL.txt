@@ -1,0 +1,829 @@
+AI Business Agent 2세대 웹서비스의 다음 구현 Task를 진행해줘.
+
+이번 Task에서는 비용 카테고리 중 두 번째인 `플랫폼 비용` 입력 화면을 구현한다.
+
+이번 Task의 핵심 UX는 다음과 같다.
+
+```text
+플랫폼 비용
+→ 비용 항목 선택
+→ 배달의민족·쿠팡이츠·요기요·땡겨요 금액을 한 화면에서 입력
+→ 한 번에 저장
+→ 내부적으로 플랫폼별 비용 거래로 분리 저장
+```
+
+구현 범위:
+
+1. `/closing/expenses/platform-cost` 페이지 생성
+2. 광고비·쿠폰비 입력
+3. 4개 플랫폼 금액 동시 입력
+4. 기존 날짜·항목별 값 조회
+5. 저장 시 플랫폼별 거래 일괄 교체
+6. 0원 플랫폼 거래는 저장하지 않음
+7. 기존 값 수정·삭제 효과 지원
+8. 거래 변경 시 비용 확인 상태 해제
+9. 최종 마감 완료 상태 reopen
+10. 비용 메인 화면의 플랫폼 비용 카드 링크 활성화
+11. 사용자 정의 플랫폼 비용 항목은 조회·표시 가능하게 구조 준비
+12. 항목 추가 UI는 아직 구현하지 않음
+
+이번 Task에서는 공과금·고정비, 일반 운영비, 인건비, 세금 납부 입력 화면은 만들지 않는다.
+
+# 반드시 먼저 읽을 파일
+
+다음 파일을 먼저 확인해라.
+
+frontend/src/types/business-day.ts
+frontend/src/types/expense.ts
+frontend/src/types/expense-storage.ts
+frontend/src/types/closing-status-by-business-day.ts
+
+frontend/src/data/expense-default-items.ts
+
+frontend/src/lib/storage/business-day-storage.ts
+frontend/src/lib/storage/expense-by-business-day-storage.ts
+frontend/src/lib/storage/expense-custom-items-storage.ts
+frontend/src/lib/storage/closing-status-by-business-day-storage.ts
+
+frontend/src/lib/expense/expense-item-catalog.ts
+frontend/src/lib/expense/calculate-expense-summary.ts
+frontend/src/lib/expense/create-expense-transaction-id.ts
+
+frontend/src/app/closing/expenses/page.tsx
+frontend/src/app/closing/expenses/material-purchase/page.tsx
+
+현재 원재료 매입 페이지의 모바일 레이아웃, 오류 처리, 상태 해제, 성공 메시지, 날짜 표시 방식을 참고하되 플랫폼 비용 UX에 맞게 더 단순한 일괄 입력 화면으로 구현한다.
+
+# 1. 신규 페이지
+
+다음 파일을 생성한다.
+
+frontend/src/app/closing/expenses/platform-cost/page.tsx
+
+경로:
+
+/closing/expenses/platform-cost
+
+필요하면 `"use client"`를 사용한다.
+
+# 2. 상단 구조
+
+상단에는 다음을 표시한다.
+
+- `/closing/expenses`로 돌아가기
+- 제목: 플랫폼 비용
+- 선택 영업일
+- 현재 플랫폼 비용 총액
+- 현재 저장 거래 건수
+
+예:
+
+플랫폼 비용
+2026년 7월 16일 영업일
+
+총 플랫폼 비용 75,000원
+6건
+
+날짜 input은 추가하지 않는다.
+
+선택 날짜는:
+
+getSelectedBusinessDate()
+
+를 사용한다.
+
+# 3. 공식 플랫폼 순서
+
+다음 순서를 고정한다.
+
+1. 배달의민족
+2. 쿠팡이츠
+3. 요기요
+4. 땡겨요
+
+내부 platformId:
+
+- baemin
+- coupang-eats
+- yogiyo
+- ddangyo
+
+가능하면 기존 `ExpensePlatformId` 타입과 공식 label 상수를 재사용한다.
+
+화면에서 플랫폼 순서를 임의로 정렬하지 않는다.
+
+# 4. 비용 항목 목록
+
+기본 플랫폼 비용 항목:
+
+- 광고비
+- 쿠폰비
+
+공식 기본 ID:
+
+- platform-cost.advertising
+- platform-cost.coupon
+
+항목 목록은 공식 기본 항목 정의에서 조회한다.
+
+하드코딩된 label과 ID를 여러 곳에 중복 작성하지 않는다.
+
+사용자 정의 항목 저장소에 enabled 상태의 platform-cost 항목이 있다면 기본 항목 뒤에 표시한다.
+
+표시 순서:
+
+공식 기본 항목
+→ 사용자 정의 항목
+
+이번 Task에서는 항목 추가 버튼 또는 사용자 정의 항목 생성 UI를 구현하지 않는다.
+
+사용자 정의 항목이 존재하면 입력·저장 가능해야 한다.
+
+# 5. 권장 화면 구조
+
+플랫폼 비용 페이지에서는 항목별 섹션을 세로로 배치한다.
+
+예:
+
+광고비
+
+배달의민족      [30,000원]
+쿠팡이츠        [10,000원]
+요기요           [5,000원]
+땡겨요               [0원]
+
+[광고비 저장]
+
+쿠폰비
+
+배달의민족      [20,000원]
+쿠팡이츠         [5,000원]
+요기요               [0원]
+땡겨요           [5,000원]
+
+[쿠폰비 저장]
+
+다만 항목별 개별 저장 버튼이 화면을 복잡하게 만든다면 페이지 하단에 하나의 통합 저장 버튼을 둘 수 있다.
+
+권장 최종 UX:
+
+모든 항목과 플랫폼 금액을 한 화면에서 입력
+→ 페이지 하단 `플랫폼 비용 저장`
+
+이번 Task에서는 통합 저장 방식을 우선한다.
+
+# 6. 입력 state 구조
+
+각 비용 항목과 플랫폼 조합별 문자열 state가 필요하다.
+
+개념:
+
+Record<
+  ExpenseItemId,
+  Record<ExpensePlatformId, string>
+>
+
+또는 현재 TypeScript 구조에 맞는 안전한 타입을 사용한다.
+
+`any` 사용 금지.
+
+각 필드는 기존 MoneyField를 재사용할 수 있다면 사용한다.
+
+입력 요구사항:
+
+- inputMode="numeric"
+- 천 단위 쉼표 표시
+- 빈 값은 0
+- 0원 이상
+- 음수 금지
+- NaN·Infinity 금지
+- 숫자가 아닌 문자열 차단
+
+# 7. 기존 저장값 불러오기
+
+마운트 시 선택 날짜의 platform-cost 거래를 조회한다.
+
+getExpensesByBusinessDateAndGroup(
+  businessDate,
+  "platform-cost"
+)
+
+각 거래의:
+
+- itemId
+- platformId
+- amount
+- transactionType
+
+를 기준으로 입력 state를 복원한다.
+
+이번 화면에서 직접 수정 가능한 것은:
+
+transactionType === "expense"
+
+인 거래만이다.
+
+refund·cancellation 거래가 존재하면 합계에는 반영하되 입력 필드 덮어쓰기 대상으로 사용하지 않는다.
+
+완료 보고에서 해당 정책을 명시한다.
+
+# 8. 중복 거래 처리 정책
+
+같은 날짜에 같은 itemId + platformId + transactionType expense 조합이 여러 건 존재할 수 있다.
+
+이번 일괄 입력 화면에서는 최종적으로 각 조합당 expense 거래를 최대 1건으로 정규화한다.
+
+저장 시:
+
+```text
+선택 날짜의 기존 platform-cost expense 거래
+→ 화면 입력값 기준으로 교체
+```
+
+단, 기존 refund·cancellation 거래는 보존한다.
+
+즉 교체 대상:
+
+group === "platform-cost"
+&& transactionType === "expense"
+
+보존 대상:
+
+group !== "platform-cost"
+또는
+transactionType === "refund"
+또는
+transactionType === "cancellation"
+
+기존 `replaceExpenseTransactionsByGroup()`이 그룹 전체를 교체하므로 refund·cancellation까지 삭제할 위험이 있다면 그대로 사용하지 않는다.
+
+다음 중 안전한 방식을 구현한다.
+
+권장:
+
+- 기존 platform-cost 거래 조회
+- refund·cancellation 거래 보존
+- 새 expense 거래 생성
+- 보존 거래 + 새 expense 거래를 `replaceExpenseTransactionsByGroup()`에 전달
+
+이때 같은 날짜·그룹 조건을 지킨다.
+
+# 9. 저장 거래 생성
+
+각 항목·플랫폼 조합에서 금액이 0원보다 큰 경우에만 거래를 생성한다.
+
+거래 구조:
+
+{
+  id,
+  businessDate,
+  group: "platform-cost",
+  itemId,
+  itemName,
+  amount,
+  transactionType: "expense",
+  platformId,
+  createdAt,
+  updatedAt
+}
+
+속성:
+
+- vendorName 사용하지 않음
+- memo 기본 사용하지 않음
+- estimatedInputVat는 이번 Task에서 생성하지 않음
+- inventoryApplied 사용하지 않음
+- evidence/OCR 사용하지 않음
+
+itemName은 현재 카탈로그 label을 거래 저장 당시 복사한다.
+
+# 10. 기존 ID와 createdAt 보존
+
+같은 날짜·itemId·platformId의 기존 expense 거래가 있고 금액만 수정된 경우:
+
+- 기존 id 유지
+- 기존 createdAt 유지
+- updatedAt 갱신
+
+신규 조합:
+
+- 새 ID 생성
+- createdAt과 updatedAt 현재 시각
+
+금액을 0원으로 변경하면 해당 조합의 기존 expense 거래는 제거한다.
+
+따라서 UI에서 별도의 삭제 버튼 없이 0원 저장으로 삭제 효과를 제공한다.
+
+사용자에게 다음 보조 안내를 표시한다.
+
+0원으로 저장하면 해당 플랫폼 비용 기록이 삭제됩니다.
+
+# 11. 통합 저장
+
+페이지 하단 버튼:
+
+플랫폼 비용 저장
+
+클릭 시:
+
+1. 모든 입력 검증
+2. 기존 platform-cost 거래 조회
+3. 기존 refund·cancellation 거래 보존
+4. 기존 expense 거래를 조합별 map으로 구성
+5. 0원 초과 입력만 거래 생성
+6. 기존 조합은 id·createdAt 보존
+7. 신규 조합은 새 ID 생성
+8. replaceExpenseTransactionsByGroup() 호출
+9. 저장 성공 후 setExpenseUnconfirmed(businessDate)
+10. 목록·합계·state 재조회
+11. 성공 메시지 표시
+
+성공 문구:
+
+플랫폼 비용을 저장했습니다.
+
+실패 문구:
+
+플랫폼 비용을 저장하지 못했습니다. 다시 시도해주세요.
+
+저장 성공 후 자동으로 비용 메인 화면으로 이동하지 않는다.
+
+사용자가 결과를 확인할 수 있도록 현재 페이지에 머문다.
+
+별도 `비용으로 돌아가기` 링크는 상단에 유지한다.
+
+# 12. 비용 상태 해제
+
+플랫폼 비용 저장이 실제로 성공하면:
+
+setExpenseUnconfirmed(businessDate)
+
+호출.
+
+결과:
+
+- expenseStatus → unconfirmed
+- closingStatus → open
+- completedAt → null
+
+입력값이 기존 저장값과 완전히 같아 실제 변경이 없는 경우에도 저장 버튼을 누르면 unconfirmed로 돌릴지 정책을 정한다.
+
+권장:
+
+- 저장 전 기존 정규화 값과 신규 정규화 값을 비교
+- 실제 데이터 변경이 있을 때만 setExpenseUnconfirmed()
+- 변경 없음이면 상태 유지
+- 성공 문구는 `변경된 내용이 없습니다.`
+
+복잡도가 지나치게 커지면 저장 성공 시 항상 unconfirmed 처리할 수 있으나, 완료 보고에 명확히 적는다.
+
+가능하면 실제 변경 감지를 구현한다.
+
+# 13. 항목별 합계와 플랫폼별 합계
+
+화면에 다음 요약을 제공한다.
+
+항목별 합계:
+
+광고비 45,000원
+쿠폰비 30,000원
+
+플랫폼별 합계:
+
+배달의민족 50,000원
+쿠팡이츠 15,000원
+요기요 5,000원
+땡겨요 5,000원
+
+전체:
+
+플랫폼 비용 합계 75,000원
+
+입력 중 실시간 합계를 보여주면 좋지만, 구현 복잡도가 커지지 않도록 순수 helper를 사용한다.
+
+가능한 신규 파일:
+
+frontend/src/lib/expense/calculate-platform-cost-input-summary.ts
+
+React·LocalStorage에 의존하지 않는 순수 함수로 구현할 수 있다.
+
+화면에서 계산식을 반복하지 않는다.
+
+# 14. 비용 메인 화면 링크 활성화
+
+수정 파일:
+
+frontend/src/app/closing/expenses/page.tsx
+
+플랫폼 비용 카드의 `준비 중` 표시를 제거한다.
+
+경로 연결:
+
+/closing/expenses/platform-cost
+
+표시 예:
+
+플랫폼 비용
+광고비·쿠폰비
+6건 · 75,000원
+>
+
+원재료 매입 카드 링크는 그대로 유지한다.
+
+나머지 4개 카테고리는 계속 준비 중:
+
+- 공과금·고정비
+- 일반 운영비
+- 인건비
+- 세금 납부
+
+# 15. 사용자 정의 플랫폼 비용 항목
+
+`getExpenseItemsForGroup("platform-cost")`를 사용하여 공식 항목과 enabled 사용자 항목을 함께 표시한다.
+
+사용자 항목 예:
+
+프로모션
+리뷰이벤트
+노출광고
+
+해당 항목도 4개 플랫폼 금액 입력 구조를 동일하게 사용한다.
+
+비활성 사용자 항목은 신규 입력 영역에 표시하지 않는다.
+
+다만 해당 비활성 itemId의 과거 거래가 존재한다면 데이터가 사라져 보이면 안 된다.
+
+권장 처리:
+
+- enabled 카탈로그 항목은 입력 섹션으로 표시
+- 현재 날짜에 거래가 존재하는 비활성 사용자 항목은 읽기 가능한 섹션으로 포함하거나
+- 거래 itemName을 기반으로 별도 과거 항목 영역 표시
+
+이번 MVP에서는 최소한 과거 거래 합계가 전체 합계에서 누락되지 않게 한다.
+
+# 16. 신규 입력·조회·수정·삭제 흐름
+
+## 신규 입력
+
+빈 날짜
+→ 광고비와 쿠폰비 각 플랫폼 금액 입력
+→ 저장
+→ 플랫폼별 거래 생성
+
+## 조회
+
+기존 날짜 재진입
+→ 기존 itemId + platformId별 금액 복원
+
+## 수정
+
+기존 금액 변경
+→ 같은 거래 ID 유지
+→ 금액·updatedAt 변경
+
+## 삭제
+
+기존 금액을 0원으로 변경
+→ 해당 expense 거래 제거
+
+별도의 수정 모드와 삭제 버튼은 만들지 않는다.
+
+# 17. 환급·취소 표시
+
+기존 refund·cancellation 거래가 있으면 입력 필드와 별도로 작은 읽기 전용 영역에 표시할 수 있다.
+
+예:
+
+조정 내역
+배달의민족 광고비 환급 -10,000원
+
+다만 이번 Task에서 환급·취소 UI를 새로 만들지 않아도 된다.
+
+최소 요구사항:
+
+- 저장 시 기존 refund·cancellation 거래 보존
+- 전체 합계에는 기존 calculateExpenseSummary 기준으로 반영
+- expense 입력 필드에는 합산하지 않음
+
+# 18. 오류 처리
+
+다음 경우 화면이 깨지지 않아야 한다.
+
+- 잘못된 businessDate
+- 깨진 비용 JSON
+- 잘못된 사용자 정의 항목 JSON
+- platformId 누락 거래
+- 알 수 없는 itemId 거래
+- 중복 expense 거래
+- NaN·Infinity
+- 매우 큰 금액
+- LocalStorage 저장 실패
+
+알 수 없는 itemId 거래는 전체 합계에서는 유지하되 공식 입력 섹션에서 임의로 매핑하지 않는다.
+
+# 19. 모바일 UI 원칙
+
+현재 정리한 얇고 단정한 UI를 유지한다.
+
+- max-w-md
+- rounded-xl
+- 항목 섹션 간격 12px 내외
+- 플랫폼 행 높이 최소 52px
+- label과 금액 입력이 겹치지 않음
+- 큰 금액에서 가로 스크롤 없음
+- 플랫폼별 행을 과도한 중첩 카드로 만들지 않음
+- 통합 저장 버튼 최소 높이 56px
+- 하단 여백 충분
+- 숫자 키패드 사용 가능
+- 저장 중 중복 클릭 방지
+
+# 20. 필수 브라우저 테스트
+
+## 테스트 1: 빈 날짜
+
+확인:
+
+- 광고비·쿠폰비 표시
+- 4개 플랫폼 각 0원
+- 전체 합계 0원
+- 저장 가능
+- 0원 거래는 생성되지 않음
+
+## 테스트 2: 광고비 저장
+
+입력:
+
+배민 30,000
+쿠팡 10,000
+요기요 5,000
+땡겨요 0
+
+확인:
+
+- 거래 3건 생성
+- 플랫폼 비용 합계 45,000원
+- 땡겨요 거래 없음
+
+## 테스트 3: 쿠폰비 추가
+
+입력:
+
+배민 20,000
+쿠팡 5,000
+요기요 0
+땡겨요 5,000
+
+확인:
+
+- 전체 expense 거래 6건
+- 광고비 45,000원
+- 쿠폰비 30,000원
+- 전체 75,000원
+
+## 테스트 4: 재진입 조회
+
+새로고침 또는 페이지 재진입.
+
+확인:
+
+- 기존 값 복원
+- 합계 동일
+
+## 테스트 5: 수정
+
+배민 광고비:
+
+30,000 → 40,000
+
+확인:
+
+- 기존 ID 유지
+- createdAt 유지
+- updatedAt 변경
+- 전체 합계 85,000원
+
+## 테스트 6: 0원 삭제
+
+쿠팡 광고비:
+
+10,000 → 0
+
+확인:
+
+- 해당 거래 제거
+- 다른 거래 유지
+- 합계 갱신
+
+## 테스트 7: 날짜 분리
+
+7월 16일 저장 후 7월 17일 선택.
+
+확인:
+
+- 7월 17일 모두 0원
+- 7월 16일 재선택 시 기존 값 복원
+
+## 테스트 8: 비용 상태 해제
+
+expenseStatus confirmed-with-data 상태에서 실제 금액 변경 저장.
+
+확인:
+
+- expenseStatus unconfirmed
+- closingStatus open
+- completedAt null
+
+## 테스트 9: 변경 없음 저장
+
+기존 값 그대로 저장.
+
+확인:
+
+- 데이터 중복 생성 없음
+- 가능하면 상태 유지
+- `변경된 내용이 없습니다.` 표시
+
+## 테스트 10: refund 보존
+
+기존 refund 거래가 있는 상태에서 expense 일괄 저장.
+
+확인:
+
+- refund 거래 유지
+- expense 거래만 교체
+- 합계에서 refund 음수 반영
+
+## 테스트 11: 사용자 정의 항목
+
+enabled platform-cost 사용자 항목 존재.
+
+확인:
+
+- 기본 항목 뒤 표시
+- 4개 플랫폼 입력 가능
+- 저장·복원 가능
+
+## 테스트 12: 비용 메인 화면 연결
+
+플랫폼 비용 카드 클릭.
+
+확인:
+
+- 실제 페이지 이동
+- 준비 중 문구 제거
+- 저장 후 복귀 시 건수·합계 반영
+
+## 테스트 13: 입력 검증
+
+차단:
+
+- 음수
+- NaN
+- Infinity
+- 숫자 아닌 문자열
+
+빈 문자열은 0원 처리.
+
+## 테스트 14: 모바일
+
+- 4개 플랫폼 행 입력 가능
+- 숫자 키패드
+- 긴 금액 겹침 없음
+- 저장 버튼 가림 없음
+- 가로 스크롤 없음
+
+# 21. 기존 기능 비간섭
+
+이번 Task에서 변경하지 않는다.
+
+- 원재료 매입 CRUD
+- 비용 메모
+- 매출 입력
+- 정산 엔진
+- 수수료 설정
+- 예상 정산율
+- 날짜별 매출
+- 배달대행사
+- Home
+- 경영성과
+- 더보기
+
+# 22. 절대 구현하지 말 것
+
+이번 Task에서는 다음을 구현하지 않는다.
+
+- 사용자 정의 항목 추가 UI
+- 공과금·고정비 화면
+- 일반 운영비 화면
+- 인건비 화면
+- 세금 납부 화면
+- 플랫폼 환급·취소 입력 UI
+- 광고 성과 분석
+- 플랫폼 기여이익 분석
+- 예상 매입세액 계산
+- 증빙 업로드
+- OCR
+- 재고 연결
+
+# 23. 코드 품질
+
+- any 사용 금지
+- 기존 저장소 함수 재사용
+- LocalStorage 직접 접근 금지
+- ID·createdAt 보존
+- refund·cancellation 보존
+- 공식 항목 카탈로그 재사용
+- 입력 객체 mutate 금지
+- 저장 중 중복 클릭 방지
+- console.log 제품 코드 금지
+- 새 패키지 설치 금지
+- 불필요한 대규모 리팩터링 금지
+- hydration mismatch 방지
+
+# 24. 검증 명령
+
+작업 후 실행한다.
+
+cd frontend
+npm run lint
+npm run build
+
+# 완료 후 보고 형식
+
+## 1. 생성한 파일
+
+실제 경로
+
+## 2. 수정한 파일
+
+실제 경로와 역할
+
+## 3. 플랫폼 비용 화면 구조
+
+항목·플랫폼 행·요약·저장 버튼
+
+## 4. 기존값 복원
+
+itemId + platformId 매핑 방식
+
+## 5. 일괄 저장
+
+거래 생성·수정·0원 삭제 방식
+
+## 6. ID와 createdAt 보존
+
+기존 거래 수정 규칙
+
+## 7. refund·cancellation 보존
+
+일괄 교체 정책
+
+## 8. 사용자 정의 항목
+
+조회·표시·저장 처리
+
+## 9. 비용 상태 해제
+
+실제 변경 시 상태 처리
+
+## 10. 비용 메인 화면 연결
+
+카드 링크와 복귀 후 반영
+
+## 11. 날짜별 분리 테스트
+
+두 날짜 결과
+
+## 12. 입력 검증
+
+차단·정규화 규칙
+
+## 13. 기존 기능 영향
+
+수정하지 않은 영역
+
+## 14. lint 및 build
+
+결과
+
+## 15. 남은 한계
+
+반드시 명시:
+
+- 사용자 정의 항목 추가 UI는 아직 없음
+- 환급·취소 입력 UI는 아직 없음
+- 플랫폼 광고 성과와 기여이익 분석은 아직 없음
+- 증빙·OCR 기능은 아직 없음
+- 다른 비용 카테고리 화면은 아직 없음
+
+## 16. 다음 Task
+
+공과금·고정비 입력 화면 구현에 필요한 예상 파일만 제안한다.
+
+아직 다른 카테고리 입력 화면은 구현하지 않는다.
+
+# 매우 중요한 제한
+
+이번 Task의 목적은 날짜별 플랫폼 비용을 항목별·플랫폼별로 한 화면에서 입력하고 일괄 저장하는 것이다.
+
+다른 비용 카테고리 화면은 만들지 않는다.

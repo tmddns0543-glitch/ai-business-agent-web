@@ -1,0 +1,445 @@
+AI Business Agent 2세대 웹서비스의 다음 구현 Task를 진행해줘.
+
+이번 Task에서는 원재료 매입 입력 UX를 개선하기 위해 `거래처 저장소 + 자동완성 + 최근 사용 거래처` 기능을 구현한다.
+
+이번 Task의 목적은 사용자가 원재료 매입을 입력할 때 같은 거래처명을 반복해서 직접 입력하지 않도록 하고, 거래처명 오타와 중복을 줄이는 것이다.
+
+핵심 흐름:
+
+```text
+원재료 매입 화면 진입
+→ 거래처명 입력 시작
+→ 기존 거래처 자동완성 표시
+→ 거래처 선택 또는 직접 입력
+→ 저장 성공
+→ 거래처 사용 기록 갱신
+→ 다음 입력부터 최근·자주 사용한 거래처 우선 표시
+```
+
+구현 범위:
+
+1. 원재료 거래처 타입 정의
+2. 거래처 LocalStorage 저장소 구현
+3. 기존 원재료 매입 거래에서 거래처명 수집
+4. 거래처명 정규화 및 중복 방지
+5. 원재료 매입 화면 자동완성 UI
+6. 최근 사용 거래처 우선 표시
+7. 즐겨찾기 토글
+8. 직접 입력 허용
+9. 기존 원재료 거래 데이터 보존
+10. 거래처 선택 시 거래처명 입력 자동 완성
+
+이번 Task에서는 별도 거래처 관리 화면을 만들지 않는다.
+
+# 반드시 먼저 읽을 파일
+
+frontend/src/types/expense.ts
+frontend/src/types/expense-storage.ts
+frontend/src/lib/storage/expense-by-business-day-storage.ts
+frontend/src/lib/storage/business-day-storage.ts
+frontend/src/app/closing/expenses/material-purchase/page.tsx
+frontend/src/lib/expense/create-expense-transaction-id.ts
+
+현재 원재료 매입 화면의 거래처명 input, 신규 저장, 수정, 삭제, 입력 검증, 비용 상태 해제, 모바일 UI 구조를 확인한 뒤 기존 기능을 깨뜨리지 않고 자동완성을 추가한다.
+
+# 1. 거래처 타입
+
+다음 파일을 생성한다.
+
+frontend/src/types/material-vendor.ts
+
+권장 타입:
+
+export interface MaterialVendor {
+  id: string;
+  name: string;
+  normalizedName: string;
+  favorite: boolean;
+  usageCount: number;
+  lastUsedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MaterialVendorStorageData {
+  version: 1;
+  vendors: MaterialVendor[];
+}
+
+# 2. 거래처명 정규화
+
+다음 순수 함수를 생성한다.
+
+frontend/src/lib/material-vendor/normalize-material-vendor-name.ts
+
+함수:
+
+normalizeMaterialVendorName(name: string): string
+
+규칙:
+
+- 앞뒤 공백 제거
+- 연속 공백 1칸으로 정리
+- 영문 대소문자 구분 제거
+- 비교용 문자열 반환
+- 원본 표시명은 별도로 유지
+- `(주)`, 주식회사, 유한회사 등의 문자열은 자동 제거하지 않음
+
+# 3. 거래처 ID 생성
+
+다음 파일을 생성하거나 기존 ID helper 스타일을 재사용한다.
+
+frontend/src/lib/material-vendor/create-material-vendor-id.ts
+
+함수:
+
+createMaterialVendorId()
+
+- crypto.randomUUID 우선
+- fallback 제공
+- 새 패키지 금지
+- 배열 index 사용 금지
+
+# 4. 거래처 저장소
+
+다음 파일을 생성한다.
+
+frontend/src/lib/storage/material-vendor-storage.ts
+
+LocalStorage key:
+
+material-vendors
+
+상수:
+
+MATERIAL_VENDOR_STORAGE_KEY
+
+구현 함수:
+
+- getMaterialVendorStorage()
+- getMaterialVendors()
+- getMaterialVendorById(vendorId)
+- findMaterialVendorByName(name)
+- addMaterialVendor(name)
+- upsertMaterialVendorFromExpense(vendorName)
+- setMaterialVendorFavorite(vendorId, favorite)
+
+정렬 기준:
+
+1. favorite true
+2. lastUsedAt 최신
+3. usageCount 높은 순
+4. name 가나다순
+
+중복 기준:
+
+normalizedName
+
+삭제 함수는 만들지 않는다.
+
+# 5. 기존 원재료 거래에서 거래처 수집
+
+기존 `business-day-expenses`의 모든 날짜에서 `material-purchase` 거래의 vendorName을 수집한다.
+
+권장 helper:
+
+frontend/src/lib/material-vendor/get-material-vendor-suggestions.ts
+
+동작:
+
+1. material-vendors 조회
+2. 기존 모든 날짜의 material-purchase 거래에서 vendorName 수집
+3. normalizedName 기준 중복 제거
+4. 저장된 거래처 정보가 있으면 favorite·usageCount·lastUsedAt 사용
+5. 저장소에 없는 과거 거래처는 임시 suggestion으로 포함
+6. 정렬 후 반환
+
+기존 비용 거래는 수정하지 않는다.
+
+필요하면 expense 저장소에 다음 읽기 함수만 추가한다.
+
+getAllExpenseTransactions()
+또는
+getAllMaterialPurchaseTransactions()
+
+# 6. suggestion 타입
+
+권장 타입:
+
+export interface MaterialVendorSuggestion {
+  id: string | null;
+  name: string;
+  normalizedName: string;
+  favorite: boolean;
+  usageCount: number;
+  lastUsedAt: string | null;
+  source: "vendor-storage" | "expense-history";
+}
+
+# 7. 자동완성 검색 함수
+
+순수 함수:
+
+filterMaterialVendorSuggestions(
+  suggestions,
+  query,
+  limit
+)
+
+규칙:
+
+- query trim
+- normalizedName 기준 검색
+- 이름 앞부분 일치 우선
+- 포함 일치 그다음
+- favorite 우선
+- 최근 사용 우선
+- 최대 5~8개 표시
+- query 빈 값이면 favorite·최근 사용 거래처 표시
+- 한글 초성 검색은 구현하지 않음
+
+# 8. 원재료 매입 화면 수정
+
+수정 파일:
+
+frontend/src/app/closing/expenses/material-purchase/page.tsx
+
+기존 거래처명 input을 자동완성 가능한 입력으로 확장한다.
+
+요구 UI:
+
+- 거래처명 input
+- input focus 또는 입력 시 suggestion 목록 표시
+- suggestion 클릭 시 거래처명 state 갱신
+- 선택 후 목록 닫기
+- 직접 입력 가능
+- 바깥 클릭 또는 Esc로 닫기
+- 모바일 터치 가능
+- Enter가 저장 버튼을 오작동시키지 않도록 처리
+
+# 9. suggestion 목록
+
+query가 비어 있고 focus 상태라면:
+
+- 즐겨찾기 거래처
+- 최근 사용 거래처
+
+를 보여준다.
+
+query가 있으면 검색 결과를 보여준다.
+
+결과가 없으면:
+
+직접 입력한 이름으로 저장할 수 있습니다.
+
+표시.
+
+# 10. 즐겨찾기
+
+각 suggestion 행에 즐겨찾기 토글을 제공한다.
+
+- favorite true: ★
+- favorite false: ☆
+
+과거 거래 이력에만 있는 suggestion은 ID가 없을 수 있다.
+
+이 경우 즐겨찾기 클릭 시:
+
+- 해당 이름으로 거래처 저장소에 추가
+- favorite true 설정
+
+즐겨찾기 클릭이 suggestion 선택으로 동시에 작동하지 않도록 이벤트 전파를 막는다.
+
+# 11. 신규 저장 연동
+
+원재료 매입 신규 저장 성공 후:
+
+upsertMaterialVendorFromExpense(vendorName)
+
+호출.
+
+순서:
+
+1. 비용 거래 저장 성공
+2. 비용 상태 해제
+3. 거래처 사용 기록 갱신
+
+거래처 저장 실패가 비용 거래 저장 성공을 되돌리면 안 된다.
+
+# 12. 수정 연동
+
+거래처명이 변경된 수정 저장 성공 시:
+
+- 새 vendorName upsert
+- 새 거래처 usageCount 증가
+
+금액·메모만 수정한 경우 usageCount는 증가시키지 않는다.
+
+기존 거래처 usageCount는 감소시키지 않는다.
+
+# 13. 삭제 연동
+
+원재료 거래 삭제 시:
+
+- 거래처 저장소 삭제 금지
+- usageCount 감소 금지
+- favorite 유지
+
+# 14. 직접 입력
+
+자동완성 선택을 강제하지 않는다.
+
+새 이름 직접 입력 후 비용 거래 저장 성공 시 거래처 저장소에 자동 추가한다.
+
+# 15. 표시명 정책
+
+- suggestion 선택: suggestion.name 저장
+- 직접 입력 + 기존 normalizedName 일치: 기존 vendor.name 저장
+- 완전 신규 직접 입력: trim된 입력값 저장
+
+# 16. 접근성
+
+가능하면:
+
+- input과 listbox 연결
+- suggestion은 button 또는 role option
+- ArrowDown·ArrowUp
+- Enter 선택
+- Escape 닫기
+
+복잡도가 커지면 최소한:
+
+- focus 시 표시
+- 클릭·터치 선택
+- Esc 닫기
+- 바깥 클릭 닫기
+
+를 보장한다.
+
+# 17. 모바일 UI
+
+- 자동완성 목록은 input 바로 아래 overlay
+- 높은 z-index
+- max-height와 스크롤
+- 항목당 최소 44px
+- 긴 거래처명 말줄임
+- 즐겨찾기 터치 영역 확보
+- 가로 스크롤 금지
+
+# 18. 오류 처리
+
+다음 경우 화면이 깨지지 않아야 한다.
+
+- 깨진 material-vendors JSON
+- 깨진 business-day-expenses JSON
+- vendorName 누락 거래
+- 중복 거래처
+- 잘못된 usageCount
+- 잘못된 lastUsedAt
+- LocalStorage 저장 실패
+- 매우 긴 거래처명
+
+잘못된 거래처 저장값은 자동 삭제하지 않는다.
+
+# 19. 필수 테스트
+
+1. 빈 거래처 저장소에서 직접 입력 후 자동완성 생성
+2. 기존 원재료 거래에서 거래처명 중복 제거 수집
+3. query 검색
+4. suggestion 선택
+5. 신규 거래처 직접 입력
+6. 기존 거래처 재사용 시 중복 생성 없음
+7. 앞뒤 공백 중복 방지
+8. 영문 대소문자 중복 방지
+9. 즐겨찾기 저장·유지
+10. 과거 suggestion 즐겨찾기 시 저장소 생성
+11. 최근 사용 정렬
+12. 거래처명 수정 시 새 거래처 upsert
+13. 거래 삭제 시 거래처 유지
+14. 비용 거래는 날짜별, 거래처 카탈로그는 날짜 공통
+15. 깨진 JSON 안전 처리
+16. 모바일 터치·가로 스크롤 확인
+
+# 20. 기존 기능 비간섭
+
+변경하지 않는다.
+
+- 원재료 거래 저장 구조
+- 예상 매입세액
+- 비용 상태 해제
+- 비용 합계
+- 다른 5개 비용 화면
+- 매출·정산
+- 수수료 설정
+- 날짜별 마감
+- 배달대행사
+- Home
+- 경영성과
+- 더보기
+
+# 21. 절대 구현하지 말 것
+
+- 별도 거래처 관리 화면
+- 거래처 삭제 UI
+- 거래처명 일괄 변경
+- 사업자등록번호
+- 담당자·전화번호·주소
+- 외상금
+- 사용자 정의 비용 항목 UI
+- OCR
+- 증빙 업로드
+- 재고 연결
+- 거래처별 분석
+
+# 22. 코드 품질
+
+- any 사용 금지
+- LocalStorage 직접 접근 금지
+- 저장소 함수 사용
+- 정규화 순수 함수 분리
+- 검색 순수 함수 분리
+- 비용 저장 성공과 거래처 저장 성공 분리
+- console.log 금지
+- 새 패키지 금지
+- 대규모 리팩터링 금지
+- hydration mismatch 방지
+
+# 23. 검증 명령
+
+cd frontend
+npm run lint
+npm run build
+
+# 완료 후 보고 형식
+
+1. 생성한 파일
+2. 수정한 파일
+3. 거래처 저장 구조
+4. 거래처명 정규화
+5. 자동완성 UI
+6. 과거 거래처 수집
+7. 최근 사용·사용 횟수
+8. 즐겨찾기
+9. 원재료 저장 연동
+10. 날짜별 관계
+11. 오류 처리
+12. 테스트 결과
+13. 기존 기능 영향
+14. lint 및 build
+15. 남은 한계
+16. 다음 Task 제안
+
+남은 한계에 반드시 명시:
+
+- 별도 거래처 관리 화면 없음
+- 거래처 삭제·이름 변경 UI 없음
+- 사업자등록번호·연락처 없음
+- 한글 초성 검색 없음
+- OCR·재고 연결 없음
+- 거래처별 매입 분석 없음
+
+# 매우 중요한 제한
+
+이번 Task의 목적은 원재료 매입 화면에서 거래처명을 빠르고 일관되게 입력할 수 있도록 거래처 저장소와 자동완성을 구현하는 것이다.
+
+별도 거래처 관리 화면은 만들지 않는다.

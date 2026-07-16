@@ -1,0 +1,788 @@
+AI Business Agent 2세대 웹서비스의 다음 구현 Task를 진행해줘.
+
+이번 Task에서는 비용 기능의 첫 번째 기반 작업만 진행한다.
+
+구현 범위:
+
+1. 비용 관련 TypeScript 타입 정의
+2. 기본 비용 카테고리 정의
+3. 기본 비용 항목 상수 정의
+4. 사용자 정의 비용 항목 타입 정의
+5. 일일 비용 메모 타입 정의
+6. 비용 항목별 재무 영향 규칙 정의
+
+아직 LocalStorage 저장소, 비용 화면, 입력 폼, 합계 계산 화면은 만들지 않는다.
+
+이번 Task의 목적은 앞으로 구현할 날짜별 비용 저장소와 비용 입력 UI가 흔들리지 않도록 비용 데이터 구조와 공식 기본 항목을 먼저 확정하는 것이다.
+
+# 반드시 먼저 읽을 파일
+
+다음 파일을 먼저 확인한다.
+
+frontend/src/types/business-day.ts
+frontend/src/types/settlement.ts
+frontend/src/types/sales-by-business-day.ts
+frontend/src/types/closing-status-by-business-day.ts
+
+frontend/src/data/sales-platforms.ts
+frontend/src/data/settlement-default-settings.ts
+
+docs 폴더의 다음 문서도 확인한다.
+
+docs/04_Information_Architecture.md
+docs/07_Expense_Input_UX.md
+docs/10_Mobile_Wireframe.md
+docs/18_Screen_Flow.md
+docs/19_Screen_Blueprint.md
+
+실제 파일명이 조금 다르면 역할이 같은 문서를 찾아 확인한다.
+
+현재 코드의 naming convention, readonly 사용 방식, `as const satisfies` 사용 방식, ID 문자열 구성 방식을 먼저 파악한 뒤 동일한 스타일을 적용한다.
+
+# 1. 생성할 타입 파일
+
+다음 파일을 생성한다.
+
+frontend/src/types/expense.ts
+
+다음 타입을 정의한다.
+
+## ExpenseGroup
+
+공식 비용 그룹:
+
+- material-purchase
+- platform-cost
+- fixed-cost
+- operating-cost
+- labor-cost
+- tax-payment
+
+권장 타입:
+
+export type ExpenseGroup =
+  | "material-purchase"
+  | "platform-cost"
+  | "fixed-cost"
+  | "operating-cost"
+  | "labor-cost"
+  | "tax-payment";
+
+## ExpenseTransactionType
+
+초기 MVP에서는 일반 지출만 우선 사용하지만 향후 환급·취소 확장을 위해 다음 구조를 허용한다.
+
+export type ExpenseTransactionType =
+  | "expense"
+  | "refund"
+  | "cancellation";
+
+다만 이번 Task에서는 실제 계산 로직을 만들지 않는다.
+
+## ExpenseTransaction
+
+필수 필드:
+
+- id
+- businessDate
+- group
+- itemId
+- itemName
+- amount
+- transactionType
+- createdAt
+- updatedAt
+
+선택 필드:
+
+- vendorName
+- platformId
+- memo
+- estimatedInputVat
+- evidenceId
+- evidenceType
+- ocrStatus
+- inventoryApplied
+
+권장 예시:
+
+export interface ExpenseTransaction {
+  id: string;
+  businessDate: BusinessDate;
+
+  group: ExpenseGroup;
+  itemId: ExpenseItemId;
+  itemName: string;
+
+  amount: number;
+  transactionType: ExpenseTransactionType;
+
+  vendorName?: string;
+  platformId?: ExpensePlatformId;
+  memo?: string;
+
+  estimatedInputVat?: number;
+
+  evidenceId?: string;
+  evidenceType?: ExpenseEvidenceType;
+  ocrStatus?: ExpenseOcrStatus;
+  inventoryApplied?: boolean;
+
+  createdAt: string;
+  updatedAt: string;
+}
+
+`BusinessDate`는 기존 타입을 import한다.
+
+## ExpensePlatformId
+
+플랫폼 비용에서 사용하는 공식 플랫폼:
+
+- baemin
+- coupang-eats
+- yogiyo
+- ddangyo
+
+가능하면 기존 `SettlementPlatformId`를 재사용하거나 그중 일반결제를 제외한 타입을 안전하게 파생한다.
+
+중복 문자열 유니온을 무분별하게 만들지 않는다.
+
+일반결제는 플랫폼 광고비·쿠폰비 입력 대상이 아니므로 포함하지 않는다.
+
+## ExpenseEvidenceType
+
+향후 증빙 확장:
+
+- receipt
+- invoice
+- statement
+- other
+
+## ExpenseOcrStatus
+
+향후 OCR 확장:
+
+- none
+- pending
+- completed
+- failed
+
+현재 UI에는 노출하지 않는다.
+
+# 2. 사용자 정의 항목 타입
+
+같은 파일 또는 적절한 별도 타입 파일에 다음 타입을 정의한다.
+
+## ExpenseCustomItem
+
+필드:
+
+- id
+- group
+- name
+- enabled
+- createdAt
+- updatedAt
+
+권장:
+
+export interface ExpenseCustomItem {
+  id: string;
+  group: CustomizableExpenseGroup;
+  name: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+사용자 정의 항목을 허용할 그룹:
+
+- platform-cost
+- fixed-cost
+- operating-cost
+- labor-cost
+- tax-payment
+
+원재료 매입은 사용자 정의 비용 항목보다 거래처별 매입 추가가 중심이므로 제외한다.
+
+권장 타입:
+
+export type CustomizableExpenseGroup =
+  Exclude<ExpenseGroup, "material-purchase">;
+
+과거 거래 보존을 위해 사용자 정의 항목은 삭제보다 활성·비활성 구조를 전제로 한다.
+
+# 3. 일일 비용 메모 타입
+
+다음 타입을 정의한다.
+
+export interface DailyExpenseMemo {
+  businessDate: BusinessDate;
+  memo: string;
+  updatedAt: string;
+}
+
+일일 비용 메모는 원재료 거래별 메모와 별개다.
+
+- 원재료 매입: 거래별 memo 사용
+- 나머지 비용: 개별 메모를 기본으로 노출하지 않음
+- 비용 메인 화면 하단: DailyExpenseMemo 사용
+
+# 4. 비용 항목 타입
+
+다음 타입을 정의한다.
+
+## ExpenseItemId
+
+공식 기본 비용 항목 ID 문자열 유니온 또는 상수 기반 타입.
+
+ID는 사람이 보는 label과 분리한다.
+
+권장 ID 형식:
+
+material-purchase.purchase
+platform-cost.advertising
+platform-cost.coupon
+fixed-cost.rent
+fixed-cost.electricity
+operating-cost.supplies
+labor-cost.payroll
+tax-payment.vat
+
+현재 프로젝트의 기존 ID naming convention이 있다면 그 스타일을 따른다.
+
+## ExpenseItemDefinition
+
+필드:
+
+- id
+- group
+- label
+- enabled
+- system
+- supportsPlatformBreakdown
+- supportsVendor
+- supportsMemo
+- estimatesInputVat
+- affectsCashFlow
+- affectsOperatingProfit
+- affectsTaxEstimate
+
+권장:
+
+export interface ExpenseItemDefinition {
+  readonly id: ExpenseItemId;
+  readonly group: ExpenseGroup;
+  readonly label: string;
+
+  readonly enabled: boolean;
+  readonly system: boolean;
+
+  readonly supportsPlatformBreakdown: boolean;
+  readonly supportsVendor: boolean;
+  readonly supportsMemo: boolean;
+  readonly estimatesInputVat: boolean;
+
+  readonly affectsCashFlow: boolean;
+  readonly affectsOperatingProfit: boolean;
+  readonly affectsTaxEstimate: boolean;
+}
+
+필요하면 `createsAsset`, `affectsInventory` 필드를 추가할 수 있다.
+
+다만 이번 비용 화면에는 초기 투자·자산을 넣지 않으므로 기본 비용 항목에서는 `createsAsset`가 모두 false가 될 수 있다.
+
+원재료 매입은 향후 재고 연동을 위해 `affectsInventory: true`를 허용한다.
+
+# 5. 기본 비용 항목 데이터 파일
+
+다음 파일을 생성한다.
+
+frontend/src/data/expense-default-items.ts
+
+다음 상수를 정의한다.
+
+## EXPENSE_GROUPS
+
+공식 그룹 순서:
+
+1. material-purchase
+2. platform-cost
+3. fixed-cost
+4. operating-cost
+5. labor-cost
+6. tax-payment
+
+각 그룹 정보:
+
+- id
+- label
+- description
+- order
+
+사용자 화면 label:
+
+- 원재료 매입
+- 플랫폼 비용
+- 공과금·고정비
+- 일반 운영비
+- 인건비
+- 세금 납부
+
+## EXPENSE_ITEM_IDS
+
+모든 공식 기본 항목 ID를 상수로 정의한다.
+
+예:
+
+export const EXPENSE_ITEM_IDS = {
+  MATERIAL_PURCHASE: "material-purchase.purchase",
+  PLATFORM_ADVERTISING: "platform-cost.advertising",
+  PLATFORM_COUPON: "platform-cost.coupon",
+  ...
+} as const;
+
+## DEFAULT_EXPENSE_ITEMS
+
+공식 기본 항목을 정의한다.
+
+가능하면:
+
+as const satisfies readonly ExpenseItemDefinition[]
+
+또는 현재 프로젝트 스타일에 맞는 강한 타입 검사를 사용한다.
+
+# 6. 공식 기본 항목
+
+## 6.1 원재료 매입
+
+기본 항목:
+
+- 원재료 매입
+
+ID 예:
+
+material-purchase.purchase
+
+속성:
+
+- supportsVendor: true
+- supportsMemo: true
+- supportsPlatformBreakdown: false
+- estimatesInputVat: true
+- affectsCashFlow: true
+- affectsOperatingProfit: true
+- affectsTaxEstimate: true
+- affectsInventory: true
+
+주의:
+
+현재 MVP에서는 거래처별 총매입액을 입력한다.
+
+예상 매입세액은 향후 계산 계층에서 `매입금액 ÷ 11`로 단순 추정할 예정이지만 이번 Task에서는 계산 함수를 만들지 않는다.
+
+면세·의제매입세액공제는 아직 타입 확장 가능성만 열어두고 UI나 계산을 구현하지 않는다.
+
+## 6.2 플랫폼 비용
+
+기본 항목:
+
+- 광고비
+- 쿠폰비
+
+ID 예:
+
+platform-cost.advertising
+platform-cost.coupon
+
+속성:
+
+- supportsPlatformBreakdown: true
+- supportsVendor: false
+- supportsMemo: false
+- estimatesInputVat: false
+- affectsCashFlow: true
+- affectsOperatingProfit: true
+- affectsTaxEstimate: true
+
+플랫폼 비용 화면 대상 플랫폼:
+
+- 배달의민족
+- 쿠팡이츠
+- 요기요
+- 땡겨요
+
+중개수수료, 결제수수료, 카드수수료, 배달료는 기존 정산 엔진이 자동 계산하므로 기본 비용 항목에 추가하지 않는다.
+
+## 6.3 공과금·고정비
+
+기본 항목:
+
+- 월세
+- 전기세
+- 가스비
+- 수도세
+- 정수기
+- CCTV
+- 통신비
+- 카드단말기
+- 포스기
+- 방역
+- 보험
+
+권장 ID:
+
+fixed-cost.rent
+fixed-cost.electricity
+fixed-cost.gas
+fixed-cost.water
+fixed-cost.water-purifier
+fixed-cost.cctv
+fixed-cost.telecom
+fixed-cost.card-terminal
+fixed-cost.pos
+fixed-cost.pest-control
+fixed-cost.insurance
+
+속성:
+
+- supportsPlatformBreakdown: false
+- supportsVendor: false
+- supportsMemo: false
+- affectsCashFlow: true
+- affectsOperatingProfit: true
+- affectsTaxEstimate: true
+
+`귀속 월` 필드는 이번 타입에 추가하지 않는다.
+
+실제 선택 영업일 기준 입력 원칙을 유지한다.
+
+## 6.4 일반 운영비
+
+기본 항목:
+
+- 비품
+- 복리후생비
+- 주유비
+- 기타수수료
+- 소모품비
+- 주방용품
+- 수리비
+
+권장 ID:
+
+operating-cost.fixtures
+operating-cost.employee-welfare
+operating-cost.fuel
+operating-cost.other-fees
+operating-cost.consumables
+operating-cost.kitchen-tools
+operating-cost.repairs
+
+`기타잡비`는 추가하지 않는다.
+
+속성:
+
+- supportsPlatformBreakdown: false
+- supportsVendor: false
+- supportsMemo: false
+- affectsCashFlow: true
+- affectsOperatingProfit: true
+- affectsTaxEstimate: true
+
+## 6.5 인건비
+
+초기 기본 항목:
+
+- 급여
+- 4대보험 사업주 부담액
+- 기타 인건비
+
+권장 ID:
+
+labor-cost.payroll
+labor-cost.employer-social-insurance
+labor-cost.other-labor
+
+속성:
+
+- supportsPlatformBreakdown: false
+- supportsVendor: false
+- supportsMemo: false
+- affectsCashFlow: true
+- affectsOperatingProfit: true
+- affectsTaxEstimate: true
+
+국민연금, 건강보험, 장기요양보험, 고용보험, 산재보험을 각각 기본 항목으로 나누지 않는다.
+
+직원별 급여 입력과 직원 관리 기능은 이번 Task에서 만들지 않는다.
+
+## 6.6 세금 납부
+
+기본 항목:
+
+- 부가가치세
+- 종합소득세
+- 원천세
+- 지방소득세
+- 기타세금
+
+권장 ID:
+
+tax-payment.vat
+tax-payment.comprehensive-income-tax
+tax-payment.withholding-tax
+tax-payment.local-income-tax
+tax-payment.other-tax
+
+속성:
+
+- supportsPlatformBreakdown: false
+- supportsVendor: false
+- supportsMemo: false
+- affectsCashFlow: true
+- affectsOperatingProfit: false
+- affectsTaxEstimate: false
+
+중요:
+
+세금 납부는 실제 현금 유출이지만 일반 영업비용과는 분리한다.
+
+예상 부가가치세와 예상 종합소득세는 이 기본 항목에 포함하지 않는다.
+
+# 7. 재무 영향 규칙
+
+각 기본 항목에 다음 의미가 정확히 반영되어야 한다.
+
+## 원재료 매입
+
+- 현금흐름 영향: true
+- 영업손익 영향: true
+- 세금 예상 영향: true
+- 재고 영향: true
+
+현재 MVP에서는 원재료 매입액을 운영비용에 반영할 수 있지만, 향후 재고 연결 후 실제 재료비는:
+
+기초재고 + 매입 - 기말재고
+
+구조로 계산할 예정이다.
+
+이번 Task에서는 해당 계산을 구현하지 않는다.
+
+## 플랫폼 비용
+
+- 현금흐름 영향: true
+- 영업손익 영향: true
+- 세금 예상 영향: true
+
+## 공과금·고정비
+
+- 현금흐름 영향: true
+- 영업손익 영향: true
+- 세금 예상 영향: true
+
+## 일반 운영비
+
+- 현금흐름 영향: true
+- 영업손익 영향: true
+- 세금 예상 영향: true
+
+## 인건비
+
+- 현금흐름 영향: true
+- 영업손익 영향: true
+- 세금 예상 영향: true
+
+## 세금 납부
+
+- 현금흐름 영향: true
+- 영업손익 영향: false
+- 세금 예상 영향: false
+
+# 8. 기본 항목 helper 함수
+
+다음 역할의 순수 함수를 제공한다.
+
+가능한 파일:
+
+frontend/src/data/expense-default-items.ts
+
+또는:
+
+frontend/src/lib/expense/expense-item-utils.ts
+
+필요 함수:
+
+getDefaultExpenseItemsByGroup(group)
+
+- 공식 순서 유지
+- 해당 그룹 항목만 반환
+- 새 배열 반환
+
+getDefaultExpenseItem(itemId)
+
+- ID로 기본 항목 조회
+- 없으면 undefined
+
+isCustomizableExpenseGroup(group)
+
+- 사용자 정의 항목 허용 여부 반환
+- material-purchase는 false
+- 나머지는 true
+
+getExpenseGroupDefinition(group)
+
+- 그룹 정보 반환
+
+이번 Task에서는 합계 계산, VAT 계산, LocalStorage 접근은 하지 않는다.
+
+# 9. ID와 label 분리
+
+다음 원칙을 반드시 지킨다.
+
+- 저장과 참조는 itemId 사용
+- 화면 표시는 label 사용
+- itemName은 거래 저장 당시 label 보존용
+- 사용자 정의 항목이 비활성화되어도 과거 거래 itemName 유지 가능
+
+기본 항목 label 변경이 과거 거래 표시를 깨뜨리지 않도록 설계한다.
+
+# 10. readonly와 불변성
+
+기본 그룹·항목 상수는 외부에서 수정되지 않도록 readonly 구조를 사용한다.
+
+helper 함수는 원본 배열과 객체를 직접 반환해 외부에서 mutate될 위험이 있다면 복사본을 반환한다.
+
+입력 객체를 변경하지 않는다.
+
+# 11. 테스트 또는 런타임 검증
+
+새 테스트 패키지를 설치하지 않는다.
+
+현재 테스트 환경이 없다면 임시 런타임 검증을 수행하고 검증 파일은 삭제한다.
+
+필수 검증:
+
+1. 공식 비용 그룹 6개 존재
+2. 공식 순서 정확
+3. 모든 기본 항목 ID 중복 없음
+4. 모든 항목의 group이 공식 그룹에 속함
+5. 플랫폼 비용은 광고비·쿠폰비만 존재
+6. 공과금·고정비 11개 항목 존재
+7. 일반 운영비에 기타잡비 없음
+8. 인건비 3개 항목 존재
+9. 세금 납부 5개 항목 존재
+10. 세금 납부의 affectsOperatingProfit이 false
+11. 원재료 매입 supportsVendor와 supportsMemo가 true
+12. 원재료 매입 affectsInventory가 true
+13. 플랫폼 비용 supportsPlatformBreakdown이 true
+14. material-purchase는 사용자 정의 항목 그룹에서 제외
+15. helper 함수가 공식 순서를 유지
+16. helper 반환값 변경이 원본 상수에 영향을 주지 않음
+17. TypeScript 컴파일 통과
+
+# 12. 기존 기능 비간섭
+
+이번 Task에서 다음은 수정하지 않는다.
+
+- /closing 화면
+- /closing/sales 화면
+- 플랫폼 매출 입력 화면
+- 날짜별 매출 저장소
+- 날짜별 마감 상태 저장소
+- 정산 계산 엔진
+- 수수료 설정
+- 예상 정산율
+- LocalStorage key
+- 마감 진행률
+- Home
+- 경영성과
+- 더보기 설정 화면
+
+# 13. 절대 구현하지 말 것
+
+이번 Task에서는 다음을 구현하지 않는다.
+
+- 비용 LocalStorage 저장소
+- 사용자 정의 항목 저장소
+- 일일 비용 메모 저장소
+- 비용 합계 계산
+- 예상 매입세액 계산 함수
+- /closing/expenses 화면
+- 카테고리 입력 화면
+- 항목 추가 UI
+- 비용 없음 확인
+- 비용 확인 완료
+- 직원 관리
+- 배달대행사 거래 원장
+- 예상 세금 화면
+- 기초재고·기말재고
+- 경영성과 연결
+
+# 14. 검증 명령
+
+작업 후 실행한다.
+
+cd frontend
+npm run lint
+npm run build
+
+새 패키지는 설치하지 않는다.
+
+# 완료 후 보고 형식
+
+## 1. 생성한 파일
+
+실제 경로
+
+## 2. 정의한 타입
+
+각 타입의 역할
+
+## 3. 비용 그룹
+
+공식 6개 그룹과 label
+
+## 4. 기본 비용 항목
+
+카테고리별 항목 목록과 ID
+
+## 5. 재무 영향 규칙
+
+각 그룹별 affectsCashFlow, affectsOperatingProfit, affectsTaxEstimate, affectsInventory
+
+## 6. 사용자 정의 항목 구조
+
+허용 그룹과 활성·비활성 원칙
+
+## 7. 향후 확장 필드
+
+OCR, 증빙, 면세, 재고 연결 가능성
+
+## 8. helper 함수
+
+각 함수의 역할
+
+## 9. 런타임 검증
+
+필수 검증 결과
+
+## 10. 기존 기능 영향
+
+수정하지 않은 영역
+
+## 11. lint 및 build
+
+결과
+
+## 12. 다음 Task
+
+날짜별 비용 저장소, 사용자 정의 항목 저장소, 일일 비용 메모 저장소 구현에 필요한 예상 파일만 제안한다.
+
+아직 구현하지 않는다.
+
+# 매우 중요한 제한
+
+이번 Task의 목적은 비용 기능의 공식 데이터 모델과 기본 항목을 확정하는 것이다.
+
+화면이나 저장소를 만들지 말고 타입·기본 데이터·순수 helper만 구현한다.

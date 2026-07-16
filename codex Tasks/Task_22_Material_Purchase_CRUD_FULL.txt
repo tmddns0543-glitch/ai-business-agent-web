@@ -1,0 +1,752 @@
+AI Business Agent 2세대 웹서비스의 다음 구현 Task를 진행해줘.
+
+이번 Task에서는 실제 비용 입력이 가능한 첫 번째 카테고리인 `원재료 매입` 기능을 구현한다.
+
+구현 범위:
+
+1. `/closing/expenses/material-purchase` 페이지 생성
+2. 선택 영업일 기준 원재료 매입 거래 조회
+3. 신규 거래 추가
+4. 기존 거래 수정
+5. 기존 거래 삭제
+6. 거래처명·매입금액·메모 입력
+7. 예상 매입세액 자동 계산
+8. 거래 변경 시 비용 확인 상태 해제
+9. 최종 마감 완료 상태 reopen
+10. `/closing/expenses`의 원재료 매입 카드 링크 활성화
+
+이번 Task에서는 플랫폼 비용, 공과금·고정비, 일반 운영비, 인건비, 세금 납부 입력 화면은 만들지 않는다.
+
+# 반드시 먼저 읽을 파일
+
+다음 파일을 먼저 확인해라.
+
+frontend/src/types/business-day.ts
+frontend/src/types/expense.ts
+frontend/src/types/expense-storage.ts
+frontend/src/types/closing-status-by-business-day.ts
+
+frontend/src/data/expense-default-items.ts
+
+frontend/src/lib/storage/business-day-storage.ts
+frontend/src/lib/storage/expense-by-business-day-storage.ts
+frontend/src/lib/storage/closing-status-by-business-day-storage.ts
+
+frontend/src/lib/expense/calculate-expense-summary.ts
+frontend/src/lib/expense/get-expense-summary-from-storage.ts
+
+frontend/src/app/closing/expenses/page.tsx
+frontend/src/app/closing/page.tsx
+
+현재 비용 메인 화면의 카드 구조, 모바일 spacing, radius, typography와 상태 표시 방식을 확인한 뒤 같은 디자인 언어를 사용한다.
+
+# 1. 신규 페이지
+
+다음 파일을 생성한다.
+
+frontend/src/app/closing/expenses/material-purchase/page.tsx
+
+필요하면 `"use client"`를 사용한다.
+
+경로:
+
+/closing/expenses/material-purchase
+
+# 2. 상단 구조
+
+상단에는 다음을 표시한다.
+
+- `/closing/expenses`로 돌아가기
+- 제목: 원재료 매입
+- 선택 영업일
+- 현재 날짜의 원재료 매입 합계
+- 현재 거래 건수
+- 예상 매입세액 합계
+
+예:
+
+원재료 매입
+2026년 7월 16일 영업일
+
+3건
+총 매입금액 550,000원
+예상 매입세액 50,000원
+
+날짜 input은 추가하지 않는다.
+
+선택 날짜는:
+
+getSelectedBusinessDate()
+
+를 사용한다.
+
+# 3. 입력 필드
+
+원재료 매입 한 건에 필요한 필드:
+
+- 거래처명
+- 매입금액
+- 메모
+
+## 거래처명
+
+- 일반 text input
+- 앞뒤 공백 제거
+- 빈 값 저장 금지
+- 최대 길이는 현재 프로젝트 관례에 맞게 적절히 제한
+- 향후 자동완성을 붙일 수 있도록 별도 state로 관리
+
+## 매입금액
+
+- 숫자 입력
+- 0원 초과만 저장 가능
+- 음수 금지
+- NaN·Infinity 금지
+- inputMode="numeric"
+- 기존 MoneyField를 재사용할 수 있다면 사용
+- 천 단위 입력 UX 유지
+
+## 메모
+
+- 선택 입력
+- textarea 또는 text input
+- 앞뒤 공백 제거
+- 빈 문자열이면 transaction에서 memo 생략 가능
+- 원재료 매입에는 거래별 메모를 허용한다
+
+# 4. 예상 매입세액 계산
+
+다음 순수 함수를 신규 생성한다.
+
+권장 파일:
+
+frontend/src/lib/expense/calculate-estimated-input-vat.ts
+
+함수:
+
+export function calculateEstimatedInputVat(amount: number): number
+
+규칙:
+
+- amount가 유한한 양수일 때 Math.round(amount / 11)
+- 0 이하, NaN, Infinity는 0
+- React·LocalStorage에 의존하지 않음
+
+예:
+
+350000 → 31818
+120000 → 10909
+0 → 0
+
+사용자 화면에서는 반드시 다음 용어를 사용한다.
+
+예상 매입세액
+
+보조 문구:
+
+현재 입력 기준 단순 예상치입니다.
+
+면세·의제매입세액공제는 이번 Task에서 적용하지 않는다.
+
+# 5. 거래 ID 생성
+
+신규 거래마다 고유 ID가 필요하다.
+
+권장 신규 파일:
+
+frontend/src/lib/expense/create-expense-transaction-id.ts
+
+함수:
+
+createExpenseTransactionId()
+
+요구사항:
+
+- 브라우저에서 안전하게 고유 ID 생성
+- `crypto.randomUUID()` 사용 가능 여부 확인
+- fallback 필요 시 충돌 가능성을 낮춘 문자열 생성
+- 제품 코드에서 단순 배열 index를 ID로 사용하지 않음
+- 새 패키지 설치 금지
+
+ID 예:
+
+expense-xxxxxxxx
+
+현재 프로젝트에 공통 ID helper가 있으면 재사용한다.
+
+# 6. 신규 거래 추가
+
+입력 검증 통과 후 다음 형태의 `ExpenseTransaction`을 생성한다.
+
+예:
+
+{
+  id,
+  businessDate,
+  group: "material-purchase",
+  itemId: "material-purchase.purchase",
+  itemName: "원재료 매입",
+  amount,
+  transactionType: "expense",
+  vendorName,
+  memo,
+  estimatedInputVat,
+  taxTreatment: "taxable",
+  inventoryApplied: false,
+  createdAt,
+  updatedAt
+}
+
+주의:
+
+- itemId와 itemName은 `expense-default-items.ts`의 공식 정의를 조회해 사용한다.
+- 문자열을 화면에 중복 하드코딩하지 않는다.
+- taxTreatment 기본값은 현재 타입과 공식 규칙을 확인해 적절히 선택한다.
+- 면세 UI는 만들지 않는다.
+- inventoryApplied는 false.
+- evidence/OCR 필드는 이번 Task에서 사용하지 않는다.
+
+저장:
+
+addExpenseTransaction(transaction)
+
+성공 시:
+
+- 입력 폼 초기화
+- 거래 목록 재조회
+- 요약 재계산
+- 비용 상태를 unconfirmed로 변경
+- 최종 마감 상태 open
+- 성공 안내 표시
+
+성공 문구:
+
+원재료 매입을 저장했습니다.
+
+실패 문구:
+
+원재료 매입을 저장하지 못했습니다. 다시 시도해주세요.
+
+# 7. 기존 거래 목록
+
+선택 날짜의 다음 거래만 조회한다.
+
+getExpensesByBusinessDateAndGroup(
+  businessDate,
+  "material-purchase"
+)
+
+각 거래 카드에 표시:
+
+- 거래처명
+- 매입금액
+- 예상 매입세액
+- 메모
+- 수정 버튼
+- 삭제 버튼
+
+예:
+
+짜르푸드
+350,000원
+예상 매입세액 31,818원
+닭고기·소스 입고
+
+[수정] [삭제]
+
+메모가 없으면 메모 영역을 표시하지 않는다.
+
+거래 목록은 `createdAt` 또는 저장 순서 기준으로 일관되게 표시한다.
+
+권장:
+
+최근 입력이 위 또는 아래 중 하나를 선택하고 완료 보고에서 명시한다.
+
+# 8. 수정 모드
+
+별도 페이지는 만들지 않는다.
+
+같은 페이지 안에서 수정 모드를 제공한다.
+
+수정 버튼 클릭 시:
+
+- 기존 vendorName
+- amount
+- memo
+
+를 입력 폼에 불러온다.
+
+화면 제목 또는 폼 제목:
+
+신규 상태:
+원재료 매입 추가
+
+수정 상태:
+원재료 매입 수정
+
+버튼 문구:
+
+신규:
+저장
+
+수정:
+변경사항 저장
+
+수정 취소 버튼을 제공한다.
+
+수정 저장 시:
+
+updateExpenseTransaction(
+  businessDate,
+  expenseId,
+  {
+    vendorName,
+    amount,
+    memo,
+    estimatedInputVat,
+    updatedAt
+  }
+)
+
+보호:
+
+- id 변경 금지
+- businessDate 변경 금지
+- group 변경 금지
+- itemId 변경 금지
+- itemName 변경 금지
+- createdAt 유지
+
+수정 성공 시:
+
+- 수정 모드 종료
+- 폼 초기화
+- 목록 재조회
+- 요약 재계산
+- 비용 상태 unconfirmed
+- 최종 마감 reopen
+
+성공 문구:
+
+원재료 매입을 수정했습니다.
+
+# 9. 삭제
+
+삭제 버튼 클릭 시 바로 삭제하지 않는다.
+
+브라우저 confirm 또는 현재 프로젝트 스타일에 맞는 확인 UI를 사용한다.
+
+확인 문구:
+
+이 원재료 매입 기록을 삭제할까요?
+
+삭제 시:
+
+removeExpenseTransaction(businessDate, expenseId)
+
+성공 후:
+
+- 목록 재조회
+- 요약 재계산
+- 비용 상태 unconfirmed
+- 최종 마감 reopen
+
+성공 문구:
+
+원재료 매입 기록을 삭제했습니다.
+
+삭제 대상이 현재 수정 중인 거래라면 수정 모드를 종료한다.
+
+# 10. 거래 변경 시 마감 상태 처리
+
+원재료 거래의 추가·수정·삭제가 성공하면 반드시 다음 상태를 적용한다.
+
+setExpenseUnconfirmed(businessDate)
+
+이 함수가 다음을 처리해야 한다.
+
+- expenseStatus → unconfirmed
+- closingStatus → open
+- completedAt → null
+- updatedAt 갱신
+
+즉 기존 상태가:
+
+confirmed-with-data
+confirmed-none
+completed
+
+중 무엇이든, 거래가 바뀌면 다시 비용 확인이 필요하다.
+
+이 규칙은 저장 실패 시 적용하면 안 된다.
+
+# 11. 비용 메인 화면 카드 링크 활성화
+
+수정 파일:
+
+frontend/src/app/closing/expenses/page.tsx
+
+현재 원재료 매입 카드의 `준비 중` 표시를 제거한다.
+
+원재료 매입 카드만 다음 경로로 연결한다.
+
+/closing/expenses/material-purchase
+
+표시:
+
+원재료 매입
+거래처별 매입 기록
+3건 · 550,000원
+>
+
+나머지 카테고리:
+
+- 플랫폼 비용
+- 공과금·고정비
+- 일반 운영비
+- 인건비
+- 세금 납부
+
+는 계속 `준비 중` 상태를 유지한다.
+
+# 12. 비용 메인 화면 복귀 후 최신값
+
+원재료 화면에서 저장·수정·삭제 후 `/closing/expenses`로 돌아왔을 때 다음이 즉시 반영되어야 한다.
+
+- 원재료 거래 건수
+- 원재료 합계
+- 오늘 운영비용
+- 오늘 총 현금 지출
+- 예상 매입세액
+- 비용 상태 확인 필요
+
+페이지 재마운트 시 저장소를 다시 읽는 현재 구조를 유지한다.
+
+# 13. 0원 거래 정책
+
+원재료 매입은 0원 거래를 저장하지 않는다.
+
+검증:
+
+amount > 0
+
+빈 거래처명이나 0원 입력에서는 저장 버튼을 비활성화하거나 오류 표시한다.
+
+권장 오류 문구:
+
+거래처명을 입력해주세요.
+매입금액은 0원보다 커야 합니다.
+
+# 14. 환급·취소
+
+이번 화면에서는 `transactionType` 선택 UI를 만들지 않는다.
+
+신규·수정 거래는 모두:
+
+transactionType: "expense"
+
+로 저장한다.
+
+환급·취소 입력 UI는 향후 별도 기능으로 미룬다.
+
+기존 저장소가 refund/cancellation 거래를 읽을 수 있다면 목록에는 정상 표시하되, 이번 폼에서 수정할 수 있는지 정책을 명확히 한다.
+
+권장:
+
+- material-purchase 그룹의 기존 모든 거래를 목록에 표시
+- 이번 화면에서 수정은 expense 타입만 허용
+- refund/cancellation은 읽기 전용 또는 향후 기능 안내
+
+구현 복잡도가 커지면 이번 MVP에서는 저장된 expense 타입만 편집 대상으로 제한하고 완료 보고에 명시한다.
+
+# 15. 입력 데이터 불변성과 안전성
+
+- 저장소 반환 객체 mutate 금지
+- 수정 전 별도 폼 state 사용
+- amount string과 number 변환 안전 처리
+- Invalid Date 표시 금지
+- NaN 금액 표시 금지
+- 긴 거래처명에서 레이아웃 깨짐 방지
+- 긴 메모에서 줄바꿈
+
+# 16. 모바일 UI 원칙
+
+현재 비용 메인 화면과 `/closing`의 얇고 단정한 UI를 따른다.
+
+- max-w-md
+- rounded-xl
+- 카드 padding 과도하게 크게 하지 않음
+- 중첩 카드 최소화
+- 입력 높이 최소 52px
+- 저장 버튼 터치 영역 충분
+- 수정·삭제 버튼 구분
+- 삭제 버튼이 주 CTA처럼 강조되지 않음
+- 긴 금액에서 가로 스크롤 없음
+- 하단 여백 충분
+- 하단 내비게이션이 없는 페이지라면 저장 버튼이 화면 아래에 자연스럽게 배치
+
+# 17. 필수 브라우저 테스트
+
+## 테스트 1: 빈 날짜
+
+선택 날짜에 원재료 거래 없음.
+
+확인:
+
+- 목록 없음 안내
+- 합계 0원
+- 예상 매입세액 0원
+- 신규 입력 폼 정상
+
+## 테스트 2: 신규 거래
+
+입력:
+
+거래처: 짜르푸드
+매입금액: 350,000원
+메모: 닭고기·소스 입고
+
+확인:
+
+- 거래 저장
+- 예상 매입세액 31,818원
+- 목록 표시
+- 합계 350,000원
+- expenseStatus unconfirmed
+- closingStatus open
+
+## 테스트 3: 두 번째 거래
+
+대명축산 120,000원 저장.
+
+확인:
+
+- 두 거래 유지
+- 총 470,000원
+- 예상 매입세액 합계 42,727원
+
+## 테스트 4: 날짜 분리
+
+7월 16일 거래 저장 후 7월 17일 선택.
+
+확인:
+
+- 7월 17일 목록 비어 있음
+- 7월 16일 재선택 시 기존 거래 복원
+
+## 테스트 5: 수정
+
+짜르푸드 금액:
+
+350,000 → 380,000
+
+확인:
+
+- 같은 ID 유지
+- createdAt 유지
+- updatedAt 변경
+- 예상 매입세액 34,545원
+- 합계 갱신
+
+## 테스트 6: 삭제
+
+대명축산 거래 삭제.
+
+확인:
+
+- 해당 거래만 삭제
+- 다른 거래 유지
+- 합계 갱신
+- 상태 unconfirmed
+- closingStatus open
+
+## 테스트 7: 입력 검증
+
+다음 입력 차단:
+
+- 빈 거래처명
+- 0원
+- 음수
+- NaN
+- Infinity
+- 숫자가 아닌 문자열
+
+## 테스트 8: 비용 상태 해제
+
+비용 상태 confirmed-with-data에서 거래 수정.
+
+확인:
+
+- expenseStatus unconfirmed
+- 최종 마감 completed였다면 open
+- completedAt null
+
+## 테스트 9: confirmed-none 상태에서 거래 추가
+
+비용 없음 확인 상태에서 거래 추가.
+
+확인:
+
+- 거래 저장
+- expenseStatus unconfirmed
+- /closing 비용 카드 확인 필요
+
+## 테스트 10: 비용 메인 화면 연결
+
+원재료 카드 클릭.
+
+확인:
+
+- 실제 페이지 이동
+- 준비 중 문구 제거
+- 저장 후 복귀 시 건수·합계 반영
+
+## 테스트 11: 깨진 JSON
+
+비용 저장값이 깨져 있어도:
+
+- 페이지 오류 없음
+- 빈 목록
+- 신규 입력 가능
+
+## 테스트 12: 모바일
+
+- 거래처·금액·메모 입력 가능
+- 수정·삭제 버튼 터치 가능
+- 긴 금액에서 가로 스크롤 없음
+- 카드 간격 적절
+- 키보드가 저장 버튼을 가리지 않는지 확인
+
+# 18. 기존 기능 비간섭
+
+이번 Task에서 변경하지 않는다.
+
+- 매출 입력
+- 날짜별 매출 저장
+- 정산 엔진
+- 수수료 설정
+- 예상 정산율
+- 비용 메인 화면의 다른 카테고리
+- 비용 메모
+- 배달대행사
+- Home
+- 경영성과
+- 더보기
+
+# 19. 절대 구현하지 말 것
+
+이번 Task에서는 다음을 구현하지 않는다.
+
+- 거래처 관리 저장소
+- 거래처 자동완성
+- 플랫폼 비용 화면
+- 공과금·고정비 화면
+- 일반 운영비 화면
+- 인건비 화면
+- 세금 납부 화면
+- 사용자 정의 항목 UI
+- 증빙 이미지 업로드
+- OCR
+- 면세 체크
+- 의제매입세액공제
+- 재고 반영
+- 환급·취소 입력 UI
+- 예상 세금 화면
+
+# 20. 코드 품질
+
+- any 사용 금지
+- 예상 매입세액 순수 함수 분리
+- ID 생성 helper 분리 또는 기존 helper 재사용
+- 저장소 함수 재사용
+- LocalStorage 직접 접근 금지
+- 상태 해제는 저장 성공 후에만
+- console.log 제품 코드 금지
+- 새 패키지 설치 금지
+- 불필요한 대규모 리팩터링 금지
+- hydration mismatch 방지
+
+# 21. 검증 명령
+
+작업 후 실행한다.
+
+cd frontend
+npm run lint
+npm run build
+
+# 완료 후 보고 형식
+
+## 1. 생성한 파일
+
+실제 경로
+
+## 2. 수정한 파일
+
+실제 경로와 역할
+
+## 3. 원재료 입력 화면 구조
+
+상단·입력 폼·목록·합계
+
+## 4. 신규 거래 저장
+
+데이터 구조와 저장 흐름
+
+## 5. 수정 흐름
+
+ID·createdAt 보호와 updatedAt 갱신
+
+## 6. 삭제 흐름
+
+확인 UI와 상태 처리
+
+## 7. 예상 매입세액
+
+계산 함수와 예시
+
+## 8. 비용 상태 해제
+
+expenseStatus·closingStatus 처리
+
+## 9. 비용 메인 화면 연결
+
+원재료 카드 링크와 복귀 후 갱신
+
+## 10. 날짜별 분리 테스트
+
+두 날짜 결과
+
+## 11. 입력 검증
+
+차단한 값
+
+## 12. 기존 기능 영향
+
+수정하지 않은 영역
+
+## 13. lint 및 build
+
+결과
+
+## 14. 남은 한계
+
+반드시 명시:
+
+- 거래처 자동완성·거래처 관리는 아직 없음
+- 면세·의제매입세액공제는 아직 없음
+- OCR·증빙 업로드는 아직 없음
+- 재고 연결은 아직 없음
+- 환급·취소 입력 UI는 아직 없음
+- 예상 매입세액은 단순 amount ÷ 11 추정치
+
+## 15. 다음 Task
+
+플랫폼 비용 입력 화면 구현에 필요한 예상 파일만 제안한다.
+
+아직 다른 카테고리 입력 화면은 구현하지 않는다.
+
+# 매우 중요한 제한
+
+이번 Task의 목적은 날짜별 원재료 매입 거래의 신규 입력·조회·수정·삭제를 구현하는 것이다.
+
+다른 비용 카테고리 화면은 만들지 않는다.

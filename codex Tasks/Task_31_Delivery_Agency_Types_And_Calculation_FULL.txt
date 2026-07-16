@@ -1,0 +1,824 @@
+AI Business Agent 2세대 웹서비스의 다음 구현 Task를 진행해줘.
+
+이번 Task에서는 배달대행사 기능의 첫 번째 기반 작업만 진행한다.
+
+이번 Task의 목적은 배달대행사 거래를 일반 비용과 분리하여, 캐시 잔액과 실제 비용이 이중 계산되지 않도록 공식 데이터 구조와 계산 규칙을 정의하는 것이다.
+
+아직 LocalStorage 저장소와 화면은 만들지 않는다.
+
+# 핵심 원칙
+
+배달대행사 캐시는 선불 충전 잔액이다.
+
+따라서:
+
+- 캐시충전은 현금 유출이지만 비용이 아니다.
+- 배달대행비는 실제 비용이며 캐시 잔액을 감소시킨다.
+- 충전수수료는 실제 비용이다.
+- 캐시입금은 캐시 잔액을 증가시키는 보정 또는 유입이다.
+- 월정액수수료는 실제 비용이다.
+- 캐시충전과 배달대행비를 모두 비용으로 잡으면 이중 계산되므로 절대 그렇게 처리하면 안 된다.
+
+예:
+
+캐시 300,000원 충전
+배달대행비 80,000원 사용
+
+결과:
+
+- 현금 유출: 300,000원
+- 실제 비용: 80,000원
+- 캐시 잔액 증가 후 사용: +300,000 - 80,000
+- 비용 합계에 380,000원을 넣으면 안 됨
+
+# 반드시 먼저 읽을 파일
+
+다음 파일을 먼저 확인한다.
+
+frontend/src/types/business-day.ts
+frontend/src/types/expense.ts
+frontend/src/types/expense-storage.ts
+
+frontend/src/data/expense-default-items.ts
+
+frontend/src/lib/expense/calculate-expense-summary.ts
+frontend/src/lib/expense/expense-financial-effects.ts
+
+frontend/src/lib/storage/business-day-storage.ts
+
+frontend/src/app/closing/page.tsx
+frontend/src/app/closing/expenses/page.tsx
+
+현재 비용 시스템에서 다음 개념을 확인한다.
+
+- 현금흐름
+- 영업비용
+- 세금 납부
+- 날짜별 저장
+- 마감 상태
+- 총 현금 지출
+- 단순 잔액
+
+배달대행사 거래를 기존 ExpenseTransaction에 억지로 넣지 않는다.
+
+# 1. 생성할 타입 파일
+
+다음 파일을 생성한다.
+
+frontend/src/types/delivery-agency.ts
+
+# 2. 배달대행사 거래 유형
+
+다음 거래 유형을 정의한다.
+
+export type DeliveryAgencyTransactionType =
+  | "cash-charge"
+  | "charge-fee"
+  | "delivery-fee"
+  | "cash-credit"
+  | "monthly-fee";
+
+사용자 표시명:
+
+- cash-charge: 캐시충전
+- charge-fee: 충전수수료
+- delivery-fee: 배달대행비
+- cash-credit: 캐시입금
+- monthly-fee: 월정액수수료
+
+# 3. 거래 타입 정의
+
+권장 타입:
+
+export interface DeliveryAgencyTransaction {
+  id: string;
+  businessDate: BusinessDate;
+
+  agencyId: string;
+  agencyName: string;
+
+  type: DeliveryAgencyTransactionType;
+  amount: number;
+
+  memo?: string;
+
+  createdAt: string;
+  updatedAt: string;
+}
+
+필드 의미:
+
+- id: 거래 고유 ID
+- businessDate: 선택 영업일
+- agencyId: 배달대행사 고유 ID
+- agencyName: 거래 저장 당시 표시명 보존
+- type: 거래 유형
+- amount: 항상 0 이상의 절댓값
+- memo: 선택
+- createdAt
+- updatedAt
+
+부호는 amount에 저장하지 않고 type 규칙으로 계산한다.
+
+# 4. 배달대행사 타입
+
+향후 여러 배달대행사를 지원할 수 있도록 별도 타입을 정의한다.
+
+권장:
+
+export interface DeliveryAgency {
+  id: string;
+  name: string;
+  enabled: boolean;
+  initialCashBalance: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+초기 MVP에서도 최소 1개 이상 여러 대행사를 지원 가능한 구조로 만든다.
+
+예:
+
+- 바로고
+- 생각대로
+- 부릉
+- 지역 배달대행사
+
+이번 Task에서는 대행사 추가 UI를 만들지 않는다.
+
+# 5. 거래 유형 정의 데이터
+
+다음 파일을 생성한다.
+
+frontend/src/data/delivery-agency-transaction-types.ts
+
+다음 타입을 정의할 수 있다.
+
+export interface DeliveryAgencyTransactionTypeDefinition {
+  readonly type: DeliveryAgencyTransactionType;
+  readonly label: string;
+  readonly description: string;
+
+  readonly cashBalanceEffect: "increase" | "decrease" | "none";
+  readonly cashFlowEffect: "outflow" | "inflow" | "none";
+  readonly affectsOperatingExpense: boolean;
+  readonly estimatesInputVat: boolean;
+}
+
+# 6. 공식 재무 규칙
+
+## 6.1 캐시충전
+
+type:
+
+cash-charge
+
+의미:
+
+- 은행 또는 카드에서 배달대행사 캐시로 자금 이동
+- 현금 유출
+- 비용 아님
+- 캐시 잔액 증가
+
+규칙:
+
+- cashBalanceEffect: increase
+- cashFlowEffect: outflow
+- affectsOperatingExpense: false
+- estimatesInputVat: false
+
+예:
+
+100,000원 충전
+
+- cashBalance +100,000
+- cashOutflow +100,000
+- operatingExpense +0
+
+## 6.2 충전수수료
+
+type:
+
+charge-fee
+
+의미:
+
+- 캐시 충전 과정에서 발생한 수수료
+- 실제 비용
+- 현금 유출
+- 캐시 잔액에는 직접 반영하지 않음
+
+규칙:
+
+- cashBalanceEffect: none
+- cashFlowEffect: outflow
+- affectsOperatingExpense: true
+- estimatesInputVat: false
+
+예:
+
+100,000원 충전
+충전수수료 1,000원
+
+- 캐시 잔액 +100,000
+- 현금 유출 101,000
+- 비용 1,000
+
+## 6.3 배달대행비
+
+type:
+
+delivery-fee
+
+의미:
+
+- 실제 배달 건에 사용된 대행비
+- 실제 비용
+- 캐시 잔액 감소
+- 충전 시점의 현금 유출과는 별도로 비용 인식
+
+규칙:
+
+- cashBalanceEffect: decrease
+- cashFlowEffect: none
+- affectsOperatingExpense: true
+- estimatesInputVat: true
+
+중요:
+
+cashFlowEffect를 outflow로 두면 캐시충전과 이중 현금 유출이 된다.
+
+배달대행비는 이미 충전된 캐시 사용이므로 cashFlowEffect는 none으로 둔다.
+
+예:
+
+캐시충전 300,000
+배달대행비 80,000
+
+- 현금 유출 300,000
+- 비용 80,000
+- 캐시 잔액 +220,000
+
+## 6.4 캐시입금
+
+type:
+
+cash-credit
+
+의미:
+
+- 대행사 보상, 환급, 수동 조정 또는 별도 캐시 입금
+- 캐시 잔액 증가
+- 비용 아님
+- 외부 현금 유입으로 단정하지 않음
+
+규칙:
+
+- cashBalanceEffect: increase
+- cashFlowEffect: none
+- affectsOperatingExpense: false
+- estimatesInputVat: false
+
+주의:
+
+캐시입금이 실제 은행 입금인지, 대행사의 보상인지 상황이 다를 수 있다.
+
+이번 MVP에서는 캐시 잔액 보정 성격으로만 처리한다.
+
+현금 유입으로 계산하지 않는다.
+
+## 6.5 월정액수수료
+
+type:
+
+monthly-fee
+
+의미:
+
+- 배달대행사 이용 월정액
+- 실제 비용
+- 캐시에서 차감되는 구조를 우선 가정
+- 캐시 잔액 감소
+
+규칙:
+
+- cashBalanceEffect: decrease
+- cashFlowEffect: none
+- affectsOperatingExpense: true
+- estimatesInputVat: true
+
+주의:
+
+실제 월정액이 계좌에서 별도 출금되는 대행사도 있을 수 있다.
+
+이번 MVP에서는 캐시 차감 기준으로 정의한다.
+
+향후 paymentSource 필드 확장을 허용한다.
+
+# 7. 향후 결제 원천 확장
+
+다음 타입을 정의할 수 있다.
+
+export type DeliveryAgencyPaymentSource =
+  | "cash-balance"
+  | "bank-account"
+  | "card"
+  | "other";
+
+이번 MVP UI에는 노출하지 않는다.
+
+DeliveryAgencyTransaction에 선택 필드로 둘 수 있다.
+
+paymentSource?: DeliveryAgencyPaymentSource
+
+기본값 정책:
+
+- cash-charge: bank-account 또는 card 성격이지만 이번 계산에서는 현금 유출
+- delivery-fee: cash-balance
+- monthly-fee: cash-balance
+- charge-fee: bank-account 또는 card
+- cash-credit: other
+
+이번 Task에서는 화면과 저장 로직이 없으므로 타입 확장만 허용한다.
+
+# 8. 매입부가세 추정 규칙
+
+사용자가 앞서 확정한 기준:
+
+- 배달대행비
+- 월정액수수료
+
+는 금액을 11로 나누어 예상 매입세액으로 활용한다.
+
+계산식:
+
+Math.round(amount / 11)
+
+다만 이번 Task에서는 실제 계산 함수를 별도 파일로 만들지 않아도 된다.
+
+타입과 규칙에:
+
+estimatesInputVat: true
+
+를 정확히 표시한다.
+
+충전수수료는 이번 MVP에서는 예상 매입세액 대상에서 제외한다.
+
+향후 증빙 기준으로 수정 가능해야 한다.
+
+# 9. 배달대행사 요약 타입
+
+다음 타입을 정의한다.
+
+export interface DeliveryAgencySummary {
+  transactionCount: number;
+
+  cashChargeTotal: number;
+  chargeFeeTotal: number;
+  deliveryFeeTotal: number;
+  cashCreditTotal: number;
+  monthlyFeeTotal: number;
+
+  operatingExpenseTotal: number;
+  externalCashOutflowTotal: number;
+  estimatedInputVatTotal: number;
+
+  openingCashBalance: number;
+  cashBalanceChange: number;
+  closingCashBalance: number;
+}
+
+의미:
+
+- operatingExpenseTotal
+  - 충전수수료 + 배달대행비 + 월정액수수료
+
+- externalCashOutflowTotal
+  - 캐시충전 + 충전수수료
+  - 월정액수수료는 캐시 차감 기준이므로 외부 현금 유출에 다시 포함하지 않음
+
+- cashBalanceChange
+  - 캐시충전
+  + 캐시입금
+  - 배달대행비
+  - 월정액수수료
+
+- closingCashBalance
+  - openingCashBalance + cashBalanceChange
+
+- estimatedInputVatTotal
+  - 배달대행비 ÷ 11
+  + 월정액수수료 ÷ 11
+
+# 10. 순수 계산 함수
+
+다음 파일을 생성한다.
+
+frontend/src/lib/delivery-agency/calculate-delivery-agency-summary.ts
+
+함수:
+
+calculateDeliveryAgencySummary(
+  transactions,
+  openingCashBalance
+): DeliveryAgencySummary
+
+React·LocalStorage·브라우저 API에 의존하지 않는다.
+
+# 11. 금액 정규화
+
+- amount가 음수면 0
+- NaN·Infinity면 0
+- openingCashBalance가 NaN·Infinity면 0
+- openingCashBalance는 음수 허용 여부를 명확히 정한다
+
+권장:
+
+openingCashBalance는 음수도 허용한다.
+
+이유:
+
+대행사 미납 또는 후불 잔액이 존재할 수 있다.
+
+거래 amount는 항상 0 이상의 절댓값.
+
+# 12. 계산 순서
+
+각 거래를 순회해 다음을 계산한다.
+
+cash-charge:
+
+- cashChargeTotal += amount
+- externalCashOutflowTotal += amount
+- cashBalanceChange += amount
+
+charge-fee:
+
+- chargeFeeTotal += amount
+- operatingExpenseTotal += amount
+- externalCashOutflowTotal += amount
+
+delivery-fee:
+
+- deliveryFeeTotal += amount
+- operatingExpenseTotal += amount
+- cashBalanceChange -= amount
+- estimatedInputVatTotal += Math.round(amount / 11)
+
+cash-credit:
+
+- cashCreditTotal += amount
+- cashBalanceChange += amount
+
+monthly-fee:
+
+- monthlyFeeTotal += amount
+- operatingExpenseTotal += amount
+- cashBalanceChange -= amount
+- estimatedInputVatTotal += Math.round(amount / 11)
+
+closingCashBalance:
+
+openingCashBalance + cashBalanceChange
+
+# 13. 반올림
+
+예상 매입세액은 거래별로 계산 후 원 단위 반올림한다.
+
+예:
+
+배달대행비 거래 33,000원
+→ 예상 매입세액 3,000원
+
+배달대행비 거래 22,000원
+→ 예상 매입세액 2,000원
+
+합계:
+
+5,000원
+
+전체 합계 금액에서 한 번 나누지 않는다.
+
+# 14. 대행사별 요약
+
+향후 여러 대행사를 지원하기 위해 다음 함수도 제공한다.
+
+calculateDeliveryAgencySummariesByAgency(
+  transactions,
+  agencies
+)
+
+반환 형태는 현재 구조에 맞게 결정한다.
+
+예:
+
+Record<string, DeliveryAgencySummary>
+
+또는 배열:
+
+{
+  agencyId,
+  agencyName,
+  summary
+}[]
+
+각 대행사의 initialCashBalance를 openingCashBalance로 사용한다.
+
+이번 Task에서는 전체 합산 함수도 제공할 수 있다.
+
+calculateTotalDeliveryAgencySummary(summaries)
+
+단, 현금 잔액은 대행사별 closingCashBalance 합계로 계산한다.
+
+# 15. 전체 합계에서 주의할 점
+
+배달대행사 전체 요약에서 다음은 서로 다른 개념이다.
+
+- 실제 운영비용
+- 외부 현금 유출
+- 캐시 잔액
+
+절대 하나의 `총비용`으로 합치지 않는다.
+
+예:
+
+캐시충전 300,000
+충전수수료 1,000
+배달대행비 80,000
+월정액 20,000
+
+결과:
+
+- 외부 현금 유출: 301,000
+- 실제 운영비용: 101,000
+- 캐시 잔액 변화: +200,000
+- 예상 매입세액: 9,091원
+  - 80,000 ÷ 11 = 7,273
+  - 20,000 ÷ 11 = 1,818
+  - 합계 9,091
+
+301,000 + 101,000을 총지출로 더하면 안 된다.
+
+# 16. 향후 마감 연결 원칙
+
+이번 Task에서는 화면 연결을 하지 않는다.
+
+다만 향후 마감에서는 다음처럼 표시해야 한다.
+
+배달대행사
+
+- 현재 캐시 잔액
+- 오늘 배달대행비
+- 오늘 충전액
+- 오늘 실제 비용
+
+비용 화면의 operatingExpenseTotal과 배달대행사 비용을 합칠 때는:
+
+운영비용
++
+배달대행사 operatingExpenseTotal
+
+로 연결한다.
+
+캐시충전은 운영비용에 포함하지 않는다.
+
+단순 현금 잔액에서는:
+
+매출 정산금액
+- 일반 비용 totalCashOutflow
+- 배달대행사 externalCashOutflowTotal
+
+처럼 현금 유출을 반영할 수 있다.
+
+배달대행비를 다시 현금 유출로 차감하면 안 된다.
+
+# 17. 배달대행사 마감 상태
+
+이번 Task에서는 상태 타입을 만들지 않는다.
+
+향후 날짜별 마감 상태는 기존 deliveryStatus를 사용할 예정이다.
+
+아직 저장소·화면 연결 금지.
+
+# 18. 테스트
+
+필수 런타임 검증:
+
+## 테스트 1
+
+openingCashBalance 0
+
+캐시충전 300,000
+
+결과:
+
+- cashChargeTotal 300,000
+- externalCashOutflowTotal 300,000
+- operatingExpenseTotal 0
+- closingCashBalance 300,000
+
+## 테스트 2
+
+위 상태에서 배달대행비 80,000
+
+결과:
+
+- operatingExpenseTotal 80,000
+- externalCashOutflowTotal 300,000 유지
+- closingCashBalance 220,000
+- estimatedInputVatTotal 7,273
+
+## 테스트 3
+
+충전수수료 1,000 추가
+
+결과:
+
+- operatingExpenseTotal 81,000
+- externalCashOutflowTotal 301,000
+- closingCashBalance 220,000
+
+## 테스트 4
+
+월정액수수료 20,000 추가
+
+결과:
+
+- operatingExpenseTotal 101,000
+- externalCashOutflowTotal 301,000
+- closingCashBalance 200,000
+- estimatedInputVatTotal 9,091
+
+## 테스트 5
+
+캐시입금 10,000 추가
+
+결과:
+
+- cashCreditTotal 10,000
+- closingCashBalance 210,000
+- 운영비용 변화 없음
+- 외부 현금 유출 변화 없음
+
+## 테스트 6
+
+openingCashBalance 50,000
+
+캐시충전 없음
+배달대행비 80,000
+
+결과:
+
+- closingCashBalance -30,000
+- 음수 잔액 허용
+
+## 테스트 7
+
+NaN·Infinity·음수 거래 amount
+
+결과:
+
+- 0 처리
+- 결과에 NaN·Infinity 없음
+
+## 테스트 8
+
+거래별 VAT 반올림
+
+33,000
+22,000
+
+결과:
+
+- 3,000 + 2,000
+- 5,000
+
+## 테스트 9
+
+두 대행사
+
+A opening 100,000
+B opening 50,000
+
+각 거래 계산 후 대행사별·전체 합계 일치
+
+## 테스트 10
+
+입력 배열과 거래 객체 불변
+
+# 19. 기존 기능 비간섭
+
+이번 Task에서 다음은 수정하지 않는다.
+
+- 비용 저장소
+- 비용 입력 화면
+- 원재료 거래처
+- 사용자 정의 항목
+- 매출·정산
+- 수수료 설정
+- 날짜별 마감
+- Home
+- 경영성과
+- 더보기
+
+# 20. 절대 구현하지 말 것
+
+이번 Task에서는 다음을 구현하지 않는다.
+
+- 배달대행사 LocalStorage 저장소
+- 배달대행사 입력 화면
+- 대행사 추가 UI
+- 마감 화면 연결
+- 비용 화면 연결
+- 배달 건별 입력
+- 배달기사 관리
+- 배달 주문 연동
+- API 연동
+- OCR
+- 예상 잔액 알림
+
+# 21. 코드 품질
+
+- any 사용 금지
+- 순수 함수 분리
+- readonly 기본 정의
+- 입력 객체 mutate 금지
+- 새 패키지 설치 금지
+- console.log 제품 코드 금지
+- 대규모 리팩터링 금지
+- 기존 비용 타입에 억지로 통합 금지
+
+# 22. 검증 명령
+
+cd frontend
+npm run lint
+npm run build
+
+# 완료 후 보고 형식
+
+## 1. 생성한 파일
+
+실제 경로
+
+## 2. 정의한 타입
+
+각 타입 역할
+
+## 3. 거래 유형과 의미
+
+5개 거래 유형
+
+## 4. 현금흐름·비용·캐시잔액 규칙
+
+표로 정리
+
+## 5. 매입부가세 규칙
+
+배달대행비·월정액
+
+## 6. 요약 계산 함수
+
+입력과 반환값
+
+## 7. 대행사별·전체 합산
+
+구조
+
+## 8. 이중 계산 방지
+
+캐시충전과 배달대행비 구분
+
+## 9. 런타임 검증
+
+필수 테스트 결과
+
+## 10. 기존 기능 영향
+
+수정하지 않은 영역
+
+## 11. lint 및 build
+
+결과
+
+## 12. 남은 한계
+
+반드시 명시:
+
+- LocalStorage 저장소 없음
+- 입력 화면 없음
+- 대행사 관리 UI 없음
+- paymentSource UI 없음
+- 실제 대행사별 수수료 정책 차이 미반영
+- 마감·경영성과 연결 없음
+
+## 13. 다음 Task
+
+날짜별 배달대행사 거래 저장소 구현에 필요한 예상 파일만 제안한다.
+
+아직 화면은 구현하지 않는다.
+
+# 매우 중요한 제한
+
+이번 Task의 목적은 배달대행사 캐시와 실제 비용을 이중 계산하지 않도록 공식 타입과 계산 규칙을 정의하는 것이다.
+
+저장소와 화면은 만들지 않는다.

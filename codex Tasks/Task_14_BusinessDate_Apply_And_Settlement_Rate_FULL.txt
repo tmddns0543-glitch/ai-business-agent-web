@@ -1,0 +1,389 @@
+AI Business Agent 2세대 웹서비스의 다음 구현 Task를 진행해줘.
+
+이번 Task에서는 다음 두 가지 UX 개선만 구현한다.
+
+1. /closing의 날짜 선택을 미리보기 날짜와 확정 영업일로 구분하고, 사용자가 버튼을 눌러 확정하도록 변경한다.
+2. 매출 정산 카드에 예상 정산율을 표시한다.
+
+기존 날짜별 매출 저장소, 수수료 설정, 정산 계산 엔진, 플랫폼 입력 구조는 변경하지 않는다.
+
+# 반드시 먼저 읽을 파일
+
+frontend/src/types/business-day.ts
+frontend/src/lib/storage/business-day-storage.ts
+frontend/src/types/settlement.ts
+frontend/src/lib/settlement/get-sales-settlement-from-storage.ts
+frontend/src/lib/settlement/calculate-sales-settlement.ts
+frontend/src/lib/settlement/calculate-total-settlement.ts
+frontend/src/app/closing/page.tsx
+frontend/src/app/closing/sales/page.tsx
+frontend/src/components/sales/sales-platform-form.tsx
+
+현재 /closing에서 날짜 변경 시 state와 LocalStorage가 어떻게 갱신되는지, 정산 summary가 어떤 시점에 재조회되는지 정확히 확인한 뒤 작업한다.
+
+# 이번 Task의 UX 원칙
+
+## 날짜 선택
+
+달력에서 날짜를 바꾸면 해당 날짜의 매출·정산 결과를 즉시 미리보기로 보여준다.
+
+하지만 business-day-context의 확정 영업일은 즉시 변경하지 않는다.
+
+사용자가 다음 버튼을 눌렀을 때만 확정 영업일을 저장한다.
+
+이 날짜로 마감하기
+
+즉 다음 두 상태를 구분한다.
+
+draftBusinessDate
+- 달력에서 현재 보고 있는 미리보기 날짜
+
+selectedBusinessDate
+- LocalStorage에 저장된 확정 영업일
+
+## 예상 정산율
+
+사용자 공식 용어는 예상 정산율로 확정한다.
+
+계산식:
+
+예상 정산율 = 예상 정산금액 ÷ 총매출 × 100
+
+총매출이 0원이면 0%가 아니라 - 로 표시한다.
+
+# 1. 날짜 선택 UX 변경
+
+수정 파일:
+frontend/src/app/closing/page.tsx
+
+현재 날짜 input의 onChange에서 setSelectedBusinessDate()를 바로 호출하고 있다면 제거한다.
+
+필요한 state 역할:
+
+const [selectedBusinessDate, setSelectedBusinessDateState] = useState<BusinessDate | null>(null);
+const [draftBusinessDate, setDraftBusinessDate] = useState<BusinessDate | null>(null);
+
+이름은 현재 코드와 충돌하지 않게 조정할 수 있다.
+
+마운트 시:
+getSelectedBusinessDate()
+→ selectedBusinessDate 설정
+→ draftBusinessDate도 같은 값으로 설정
+
+날짜 input 변경 시:
+draftBusinessDate 변경
+→ 해당 날짜 정산 summary 조회
+→ 화면에 즉시 미리보기 표시
+
+이 시점에는 setSelectedBusinessDate()를 호출하지 않는다.
+
+# 2. 확정 버튼
+
+날짜 선택 영역에 다음 버튼을 추가한다.
+
+이 날짜로 마감하기
+
+버튼 클릭 시:
+
+draftBusinessDate 검증
+→ setSelectedBusinessDate(draftBusinessDate)
+→ 저장 성공 시 selectedBusinessDate state 갱신
+→ 성공 안내 표시
+
+성공 안내 문구:
+2026년 7월 16일을 마감 영업일로 선택했습니다.
+
+실제 날짜는 동적으로 표시한다.
+
+저장 실패 시:
+영업일을 저장하지 못했습니다. 다시 시도해주세요.
+
+버튼 비활성 조건:
+- draftBusinessDate 없음
+- 잘못된 날짜
+- draftBusinessDate === selectedBusinessDate
+- 저장 처리 중
+
+확정 날짜와 미리보기 날짜가 같으면 버튼을 비활성화하고 현재 마감 영업일 상태가 명확히 보이게 한다.
+
+# 3. 화면 안내
+
+미리보기 날짜와 확정 영업일이 같은 경우:
+
+2026년 7월 16일 마감 데이터를 보고 있습니다.
+
+서로 다른 경우:
+
+2026년 7월 17일 데이터를 미리 보고 있습니다.
+아직 마감 영업일로 저장되지 않았습니다.
+
+과도한 경고 색상은 사용하지 않는다.
+
+# 4. 미리보기 정산 조회
+
+현재 getSalesSettlementFromStorage()가 저장된 선택 영업일만 조회한다면 다음 함수를 추가한다.
+
+수정 가능 파일:
+frontend/src/lib/settlement/get-sales-settlement-from-storage.ts
+
+권장 함수:
+
+getSalesSettlementByBusinessDate(businessDate: BusinessDate): SalesSettlementSummary
+
+역할:
+명시적 businessDate
+→ getSalesByBusinessDate(businessDate)
+→ getBusinessFeeSettings()
+→ calculateSalesSettlement()
+
+기존 getSalesSettlementFromStorage()는:
+
+getSelectedBusinessDate()
+→ getSalesSettlementByBusinessDate()
+
+방식으로 유지한다.
+
+closing에서는 draftBusinessDate가 바뀔 때 getSalesSettlementByBusinessDate(draftBusinessDate)를 호출해 미리보기 결과를 표시한다.
+
+정산 계산식과 매핑식은 중복 구현하지 않는다.
+
+# 5. 미확정 날짜에서 하위 화면 이동 안전성
+
+사용자가 날짜만 바꾸고 이 날짜로 마감하기를 누르지 않은 상태에서 매출 카드를 눌러 /closing/sales로 이동하면 하위 화면은 기존 확정 영업일을 사용한다.
+
+따라서 draftBusinessDate !== selectedBusinessDate인 동안에는 다음 안내를 명확히 표시한다.
+
+이 날짜의 마감을 입력하려면 먼저 ‘이 날짜로 마감하기’를 눌러주세요.
+
+가능하면 매출·비용·배달대행 카드 이동을 막고 먼저 날짜 확정을 요구한다.
+
+다만 대규모 구조 변경은 하지 않는다.
+
+# 6. 예상 정산율 공통 계산
+
+예상 정산율 계산을 화면마다 중복하지 않는다.
+
+권장 신규 파일:
+frontend/src/lib/settlement/calculate-settlement-rate.ts
+
+함수:
+
+export function calculateExpectedSettlementRate(
+  grossSales: number,
+  expectedSettlement: number,
+): number | null
+
+규칙:
+- grossSales <= 0 → null
+- NaN, Infinity → null
+- 정상 → expectedSettlement / grossSales * 100
+
+예상 정산금액이 음수일 수 있는 기존 엔진 규칙은 유지한다.
+임의로 0%로 자르지 않는다.
+
+표시 함수도 같은 파일 또는 적절한 공통 유틸에 둘 수 있다.
+
+formatExpectedSettlementRate(rate: number | null): string
+
+표시:
+89.22... → 89.2%
+0원 매출 → -
+
+# 7. /closing 매출 카드 표시
+
+수정 파일:
+frontend/src/app/closing/page.tsx
+
+정보 중요도:
+
+1. 예상 정산금액
+2. 예상 정산율
+3. 총매출
+4. 예상 공제액
+
+권장 배치:
+
+예상 정산금액
+89,220원   예상 정산율 89.2%
+
+총매출       100,000원
+예상 공제액   10,780원
+
+모바일에서 답답하면 예상 정산율을 다음 줄에 배치해도 된다.
+
+기존 완료 배지와 겹치면 안 된다.
+
+# 8. /closing/sales 플랫폼 카드 표시
+
+수정 파일:
+frontend/src/app/closing/sales/page.tsx
+
+각 플랫폼 카드에 표시:
+
+예상 정산금액
+예상 정산율
+총매출
+예상 공제액
+
+총매출이 0원이면:
+예상 정산율 -
+
+기존 플랫폼 순서, 아이콘, 링크, 완료·미입력 상태를 유지한다.
+
+# 9. /closing/sales 전체 요약
+
+전체 요약에도 표시:
+
+전체 예상 정산율 = 전체 예상 정산금액 ÷ 전체 총매출 × 100
+
+총매출 0원이면 - 표시.
+
+# 10. 정산 결과 타입 변경 금지
+
+이번 Task에서는 SettlementResult와 SalesSettlementSummary에 expectedSettlementRate를 추가하지 않는다.
+
+예상 정산율은 grossSales와 expectedSettlement에서 파생되는 표시용 값이다.
+
+중복 데이터를 타입에 저장하지 않는다.
+
+# 11. 사용자 용어
+
+반드시 사용:
+- 예상 정산금액
+- 예상 정산율
+- 총매출
+- 예상 공제액
+- 이 날짜로 마감하기
+
+사용 금지:
+- 실수령률
+- 매출 보존율
+- 수령 예상률
+- 정산 효율
+- 날짜 저장
+
+# 12. 필수 브라우저 테스트
+
+1. 현재 영업일
+- 확정일과 달력 날짜가 같음
+- 정산 결과 정상
+- 버튼 비활성 또는 현재 상태 표시
+- 미리보기 안내 없음
+
+2. 다른 날짜 미리보기
+- 확정 영업일 2026-07-16
+- 달력 2026-07-17 선택
+- business-day-context는 2026-07-16 유지
+- 화면 정산값은 2026-07-17 기준 즉시 변경
+- 미리보기 안내 표시
+- 확정 버튼 활성
+
+3. 날짜 확정
+- 이 날짜로 마감하기 클릭
+- business-day-context가 2026-07-17로 저장
+- selectedBusinessDate와 draftBusinessDate 일치
+- 성공 안내 표시
+
+4. 새로고침
+- 확정 후 2026-07-17 유지
+- 해당 날짜 정산값 표시
+
+5. 미확정 상태 새로고침
+- 미리보기만 하고 확정하지 않은 상태에서 새로고침
+- 기존 확정 영업일로 돌아옴
+- 미리보기 날짜는 저장되지 않음
+
+6. 정산율
+총매출 100000
+예상 정산금액 89220
+→ 예상 정산율 89.2%
+
+7. 0원 매출
+→ 예상 정산율 -
+
+8. 화면 간 일치
+/closing과 /closing/sales의 전체 예상 정산율 일치
+
+9. 플랫폼별 정산율
+각 플랫폼별 총매출과 예상 정산금액으로 독립 계산
+
+10. 수수료 설정 변경
+- 매출 원본 유지
+- 예상 정산금액 변경
+- 예상 정산율도 함께 변경
+
+11. 모바일
+- 날짜 input과 버튼 터치 가능
+- 정산율과 완료 배지 겹침 없음
+- 긴 금액에서 가로 스크롤 없음
+
+# 13. 기존 기능 비간섭
+
+변경하지 않는다:
+- business-day-sales 저장 구조
+- 플랫폼 매출 입력 필드
+- 플랫폼 매출 저장 방식
+- business-fee-settings
+- 수수료 기본값
+- 정산 계산 엔진
+- 정산 채널 매핑
+- 매출 확인 완료 동작
+- 마감 진행률
+- 기존 완료 상태 key
+
+날짜별 완료 상태는 아직 구현하지 않는다.
+비용 기능도 구현하지 않는다.
+
+# 14. 코드 품질
+
+- any 사용 금지
+- 정산율 계산식 화면별 중복 금지
+- 정산 결과 타입에 중복 필드 추가 금지
+- 서버 환경 LocalStorage 접근 금지
+- Hydration mismatch 방지
+- console.log 제품 코드 금지
+- 새 패키지 설치 금지
+- 불필요한 대규모 리팩터링 금지
+
+# 15. 검증 명령
+
+cd frontend
+npm run lint
+npm run build
+
+실제 브라우저에서 미리보기·확정·새로고침 동작을 확인한다.
+
+# 완료 후 보고 형식
+
+1. 생성한 파일
+2. 수정한 파일
+3. selectedBusinessDate와 draftBusinessDate 구조
+4. 미리보기와 확정 흐름
+5. 예상 정산율 계산 방식
+6. /closing, /closing/sales 플랫폼 카드, 전체 요약 표시 결과
+7. 브라우저 테스트 결과
+8. 정산율 테스트 결과
+9. 기존 기능 영향
+10. lint 및 build
+11. 남은 한계
+12. 다음 Task 예상 파일
+
+남은 한계에 반드시 명시:
+- 마감 완료 상태는 아직 날짜별이 아님
+- 비용 기능은 아직 없음
+- 미확정 날짜에서는 하위 입력 화면 진입에 주의가 필요함
+
+# 매우 중요한 제한
+
+이번 Task에서는 절대로 다음을 하지 마라.
+
+- 날짜별 완료 상태 구현
+- 비용 타입 생성
+- 비용 화면 생성
+- 배달대행사 구현
+- 월말 재고 구현
+- 정산 엔진 변경
+- 수수료 설정 변경
+- 플랫폼 입력 구조 변경
+
+이번 Task의 목적은 날짜를 미리 본 뒤 명시적으로 마감 영업일을 확정하는 UX와, 정산 결과를 더 직관적으로 이해할 수 있는 예상 정산율 표시를 추가하는 것이다.

@@ -1,0 +1,706 @@
+AI Business Agent 2세대 웹서비스의 다음 구현 Task를 진행해줘.
+
+이번 Task에서는 마감 상태를 영업일별로 저장하도록 구조를 전환하고, 최종 마감 버튼을 모든 확인 상태와 무관하게 항상 사용할 수 있도록 변경한다.
+
+현재 저장된 완료 상태는 모두 개발용 임시값이므로 기존 전역 완료 key를 마이그레이션하지 않아도 된다.
+
+이번 Task의 핵심 목표는 다음과 같다.
+
+1. 매출 확인 상태를 날짜별로 저장
+2. 비용 확인 상태를 날짜별로 저장
+3. 배달대행사 확인 상태를 날짜별로 저장
+4. 최종 마감 상태를 날짜별로 저장
+5. 날짜를 바꾸면 해당 날짜의 진행률과 카드 상태를 복원
+6. 매출이 0원이면 과거 완료 상태 때문에 `완료`로 표시되지 않도록 수정
+7. 최종 마감 버튼은 미확인 항목이 있어도 항상 활성화
+8. 미확인 항목 수는 차단 조건이 아니라 안내 정보로만 표시
+9. 완료된 날짜의 데이터를 수정하면 최종 마감 상태만 다시 open으로 변경
+
+# 반드시 먼저 읽을 파일
+
+다음 파일을 먼저 확인해라.
+
+frontend/src/app/closing/page.tsx
+frontend/src/app/closing/sales/page.tsx
+frontend/src/components/sales/sales-platform-form.tsx
+
+frontend/src/types/business-day.ts
+frontend/src/lib/storage/business-day-storage.ts
+
+frontend/src/types/sales-by-business-day.ts
+frontend/src/lib/storage/sales-by-business-day-storage.ts
+
+frontend/src/lib/settlement/get-sales-settlement-from-storage.ts
+
+현재 다음 전역 LocalStorage key가 어디서 읽히고 쓰이는지 모두 검색한다.
+
+closing-sales-confirmed
+closing-expenses-confirmed
+closing-delivery-confirmed
+closing-completed
+
+비용과 배달대행사 상세 화면이 아직 없거나 임시 상태라면, 현재 실제 코드에 존재하는 범위만 안전하게 연결한다.
+
+# 1. 날짜별 마감 상태 타입
+
+다음 파일을 생성한다.
+
+frontend/src/types/closing-status-by-business-day.ts
+
+다음 타입을 정의한다.
+
+export type ClosingSectionStatus =
+  | "unconfirmed"
+  | "confirmed";
+
+export type FinalClosingStatus =
+  | "open"
+  | "completed";
+
+export interface BusinessDayClosingStatus {
+  salesStatus: ClosingSectionStatus;
+  expenseStatus: ClosingSectionStatus;
+  deliveryStatus: ClosingSectionStatus;
+  closingStatus: FinalClosingStatus;
+  completedAt: string | null;
+  updatedAt: string;
+}
+
+export interface BusinessDayClosingStatusStorageData {
+  version: 1;
+  days: Record<string, BusinessDayClosingStatus>;
+}
+
+실제 BusinessDate 타입을 import해 사용할 수 있다면 사용한다.
+
+기본 상태:
+
+salesStatus: "unconfirmed"
+expenseStatus: "unconfirmed"
+deliveryStatus: "unconfirmed"
+closingStatus: "open"
+completedAt: null
+
+updatedAt은 현재 로컬 또는 ISO datetime 문자열로 저장한다.
+
+# 2. 날짜별 마감 상태 저장소
+
+다음 파일을 생성한다.
+
+frontend/src/lib/storage/closing-status-by-business-day-storage.ts
+
+공식 LocalStorage key:
+
+business-day-closing-status
+
+상수로 export한다.
+
+BUSINESS_DAY_CLOSING_STATUS_STORAGE_KEY
+
+## 구현 함수
+
+다음 역할의 함수를 구현한다.
+
+getClosingStatusStorage()
+
+- 전체 저장소 조회
+- 잘못된 JSON, 잘못된 version, 잘못된 구조는 빈 저장소 반환
+- 서버 환경 안전
+
+getClosingStatusByBusinessDate(businessDate)
+
+- 특정 영업일 상태 조회
+- 없으면 기본 상태 반환
+- 항상 새 객체 반환
+
+updateClosingStatusByBusinessDate(businessDate, update)
+
+- 해당 날짜의 일부 필드만 갱신
+- 다른 날짜 유지
+- updatedAt 갱신
+- 저장 성공 여부 반환
+
+setSectionConfirmed(businessDate, section)
+
+section:
+- "sales"
+- "expense"
+- "delivery"
+
+역할:
+- 해당 섹션 status를 confirmed로 변경
+- closingStatus는 그대로 유지
+- updatedAt 갱신
+
+setSectionUnconfirmed(businessDate, section)
+
+역할:
+- 해당 섹션 status를 unconfirmed로 변경
+- closingStatus를 open으로 변경
+- completedAt을 null로 변경
+- updatedAt 갱신
+
+completeBusinessDayClosing(businessDate)
+
+역할:
+- 확인 상태와 무관하게 closingStatus를 completed로 변경
+- completedAt 저장
+- updatedAt 갱신
+
+reopenBusinessDayClosing(businessDate)
+
+역할:
+- closingStatus를 open으로 변경
+- completedAt null
+- 섹션 확인 상태는 유지
+- updatedAt 갱신
+
+필요하다면 helper 이름은 현재 코드에 맞게 조정할 수 있다.
+
+# 3. 오류 처리 원칙
+
+다음 경우 예외 없이 기본 상태 또는 빈 저장소를 반환한다.
+
+- window 없음
+- LocalStorage 접근 오류
+- key 없음
+- 깨진 JSON
+- null
+- 배열
+- 문자열
+- version 누락
+- version 불일치
+- days 누락
+- 잘못된 날짜 key
+- 잘못된 status 문자열
+- completedAt 잘못된 타입
+- updatedAt 잘못된 타입
+
+잘못된 기존 값을 임의로 삭제하지 않는다.
+
+입력 객체와 반환 객체를 직접 mutate하지 않는다.
+
+# 4. 기존 전역 완료 key 폐기
+
+다음 전역 key는 더 이상 읽거나 쓰지 않는다.
+
+closing-sales-confirmed
+closing-expenses-confirmed
+closing-delivery-confirmed
+closing-completed
+
+현재 데이터는 테스트용이므로 마이그레이션은 만들지 않는다.
+
+새 날짜별 저장소가 정상 동작하도록 코드 전환 후 위 전역 key 참조를 제거한다.
+
+localStorage.clear() 사용 금지.
+
+자동 removeItem을 제품 코드에 반복적으로 넣지 않는다.
+
+필요하면 개발자가 기존 key를 수동 삭제할 수 있도록 완료 보고에 안내한다.
+
+# 5. /closing 화면 날짜별 상태 연결
+
+수정 파일:
+
+frontend/src/app/closing/page.tsx
+
+현재 선택 영업일이 바뀔 때 다음을 함께 조회한다.
+
+- 해당 날짜 매출 정산 summary
+- 해당 날짜 closing status
+
+즉 날짜별로 다음 값이 즉시 변경되어야 한다.
+
+- 매출 카드 배지
+- 비용 카드 배지
+- 배달대행사 카드 배지
+- 진행률
+- 최종 마감 완료 상태
+- 최종 마감 안내 문구
+
+# 6. 매출 카드 배지 규칙
+
+매출 카드 상태는 선택 영업일 기준으로 계산한다.
+
+규칙:
+
+1. 총매출 0원
+   - 배지: 미입력
+   - salesStatus가 confirmed여도 완료로 표시하지 않는다.
+
+2. 총매출 > 0원 + salesStatus === unconfirmed
+   - 배지: 확인 필요
+
+3. 총매출 > 0원 + salesStatus === confirmed
+   - 배지: 완료
+
+즉 과거 날짜에서 완료한 전역 상태가 다른 날짜에 따라오지 않아야 한다.
+
+총매출 0원인데 완료로 보이는 현재 문제를 반드시 해결한다.
+
+# 7. 비용 카드 배지 규칙
+
+비용 기능이 아직 완성되지 않았다면 현재 저장된 비용 합계 또는 기존 임시 값을 그대로 사용할 수 있다.
+
+다만 상태 배지는 날짜별 expenseStatus를 기준으로 표시한다.
+
+권장:
+
+expenseStatus === confirmed
+→ 완료
+
+expenseStatus === unconfirmed
+→ 확인 필요
+
+향후 비용 데이터가 0원인데 `비용 없음 확인`을 지원하게 되면 confirmed-none 상태로 확장할 수 있다.
+
+이번 Task에서는 status 종류를 unconfirmed / confirmed 두 개만 사용한다.
+
+# 8. 배달대행사 카드 배지 규칙
+
+deliveryStatus === confirmed
+→ 완료
+
+deliveryStatus === unconfirmed
+→ 확인 필요
+
+현재 배달대행사 상세 데이터가 날짜별 원장이 아니더라도 상태만 날짜별로 전환한다.
+
+# 9. 진행률 계산
+
+진행률은 기존 3단계 기준을 유지한다.
+
+salesStatus === confirmed
+→ 1개 완료
+
+expenseStatus === confirmed
+→ 1개 완료
+
+deliveryStatus === confirmed
+→ 1개 완료
+
+진행률:
+
+0개 → 0%
+1개 → 33%
+2개 → 67%
+3개 → 100%
+
+단, 매출 총매출이 0원이면 salesStatus가 confirmed여도 매출 카드는 완료로 표시하지 않는다.
+
+진행률 계산에서도 매출 0원일 때 sales 완료를 인정할지 아래 규칙을 적용한다.
+
+초기 MVP 권장:
+
+총매출 0원
+→ sales 완료로 계산하지 않음
+
+따라서 sales 완료 조건:
+
+salesStatus === confirmed && grossSales > 0
+
+비용·배달대행사는 현재 status만 사용한다.
+
+# 10. 매출 확인 완료 저장
+
+수정 파일:
+
+frontend/src/app/closing/sales/page.tsx
+
+기존 `closing-sales-confirmed = "true"` 저장을 제거한다.
+
+매출 확인 완료 버튼 클릭 시:
+
+getSelectedBusinessDate()
+→ setSectionConfirmed(businessDate, "sales")
+→ /closing 이동
+
+총매출이 0원인 경우:
+
+매출 확인 완료를 허용할지 현재 UX를 확인한다.
+
+이번 Task에서는 총매출 0원일 때 완료 저장을 막는 것을 권장한다.
+
+안내 문구:
+
+입력된 매출이 없습니다.
+
+또는 기존 버튼 비활성 UX를 유지한다.
+
+# 11. 비용·배달대행 확인 완료 저장
+
+현재 코드에서 비용 확인과 배달대행 확인 버튼이 어디서 저장되는지 확인한다.
+
+기존 전역 key 저장을 날짜별 저장소 호출로 교체한다.
+
+예:
+
+setSectionConfirmed(businessDate, "expense")
+setSectionConfirmed(businessDate, "delivery")
+
+상세 화면이 아직 없고 /closing에서 임시 버튼으로 처리한다면 실제 위치에 맞게 최소 수정한다.
+
+# 12. 최종 마감 버튼 조건 제거
+
+현재 최종 마감 버튼이 `allCompleted`일 때만 활성화되어 있다면 이 조건을 제거한다.
+
+최종 마감 버튼은 다음 조건에서 항상 활성화한다.
+
+- 화면이 정상 로드됨
+- selectedBusinessDate가 유효함
+- 저장 처리 중이 아님
+- 이미 해당 날짜가 completed 상태가 아님
+
+세부 항목 미확인은 비활성 조건으로 사용하지 않는다.
+
+## 미확인 항목 안내
+
+남은 항목이 있으면 버튼 위에 다음처럼 표시한다.
+
+아직 확인하지 않은 항목이 2개 있습니다.
+입력한 내용으로 마감을 완료할 수 있습니다.
+
+남은 항목이 없으면:
+
+모든 항목을 확인했습니다.
+
+버튼:
+
+7월 15일 마감 완료하기
+
+# 13. 최종 마감 완료 저장
+
+최종 마감 버튼 클릭 시:
+
+completeBusinessDayClosing(selectedBusinessDate)
+
+호출.
+
+완료 후 해당 날짜 상태를 다시 읽어 화면 갱신.
+
+완료 상태:
+
+closingStatus === completed
+
+표시:
+
+7월 15일 마감 완료
+
+또는 기존 완료 스타일 유지.
+
+다른 날짜를 선택하면 해당 날짜의 closingStatus를 별도로 조회해야 한다.
+
+# 14. 완료 상태와 미확인 항목 공존
+
+다음 상태를 허용한다.
+
+salesStatus: confirmed
+expenseStatus: unconfirmed
+deliveryStatus: unconfirmed
+closingStatus: completed
+
+화면에서는:
+
+마감 완료
+미확인 항목 2개
+
+처럼 사실을 그대로 보여준다.
+
+closingStatus completed라고 해서 세부 상태를 자동 confirmed로 변경하지 않는다.
+
+# 15. 완료된 날짜 데이터 수정 시 처리
+
+플랫폼 매출 저장이 발생할 때 해당 날짜 closingStatus가 completed라면 최종 마감만 reopen한다.
+
+수정 파일:
+
+frontend/src/components/sales/sales-platform-form.tsx
+
+저장 성공 후:
+
+reopenBusinessDayClosing(selectedBusinessDate)
+
+호출.
+
+규칙:
+
+- salesStatus는 유지
+- expenseStatus 유지
+- deliveryStatus 유지
+- closingStatus만 open
+- completedAt null
+
+완료된 날짜가 아니어도 호출 가능하도록 idempotent하게 구현할 수 있다.
+
+수정 후 /closing으로 돌아왔을 때:
+
+수정사항이 반영되었습니다.
+마감을 다시 완료할 수 있습니다.
+
+같은 안내를 넣을 수 있지만 과도한 UI 추가는 하지 않는다.
+
+# 16. 신규 입력 시 처리
+
+새로운 날짜에 매출을 처음 저장하면:
+
+- closingStatus는 open 유지
+- salesStatus는 자동 confirmed로 만들지 않는다
+
+사용자는 `/closing/sales`에서 `매출 확인 완료`를 눌러야 한다.
+
+즉:
+
+입력 저장 ≠ 확인 완료
+
+원칙을 유지한다.
+
+# 17. 날짜 변경 흐름
+
+예:
+
+2026-07-15
+- 매출 있음
+- salesStatus confirmed
+- closingStatus completed
+
+2026-07-16
+- 매출 없음
+- 기본 status
+
+날짜 변경 시:
+
+7월 15일:
+- 매출 완료
+- 진행률 해당 값
+- 마감 완료
+
+7월 16일:
+- 매출 미입력
+- 진행률 0%
+- 마감 open
+
+서로 상태가 섞이면 안 된다.
+
+# 18. 사용자 문구
+
+사용:
+
+- 미입력
+- 확인 필요
+- 완료
+- 마감 완료
+- 아직 확인하지 않은 항목이 N개 있습니다.
+- 입력한 내용으로 마감을 완료할 수 있습니다.
+- 모든 항목을 확인했습니다.
+- 7월 15일 마감 완료하기
+
+사용 금지:
+
+- 마감 불가
+- 반드시 모두 확인해주세요
+- 완료하려면 N개가 남았습니다
+- 조건 충족 필요
+
+진행률은 안내 정보이지 강제 조건이 아니다.
+
+# 19. 필수 테스트
+
+## 테스트 1: 날짜별 매출 완료 분리
+
+7월 15일:
+- 매출 100,000원
+- 매출 확인 완료
+
+7월 16일:
+- 매출 0원
+- 미확인
+
+확인:
+
+7월 15일 매출 카드 완료
+7월 16일 매출 카드 미입력
+
+## 테스트 2: 총매출 0원 완료 방지
+
+salesStatus confirmed가 저장되어 있더라도 grossSales 0원.
+
+확인:
+
+매출 카드 완료 표시 금지
+진행률 sales 완료로 계산 금지
+
+## 테스트 3: 날짜별 진행률
+
+7월 15일:
+- sales confirmed
+- expense unconfirmed
+- delivery unconfirmed
+→ 33%
+
+7월 16일:
+- 모두 unconfirmed
+→ 0%
+
+## 테스트 4: 조건 없는 마감 완료
+
+7월 16일:
+- 모든 항목 unconfirmed
+
+확인:
+
+최종 마감 버튼 활성
+안내: 아직 확인하지 않은 항목이 3개 있습니다.
+클릭 시 closingStatus completed
+
+## 테스트 5: 일부 확인 후 마감
+
+sales만 confirmed.
+
+확인:
+
+안내: 미확인 2개
+마감 완료 가능
+closingStatus completed
+
+## 테스트 6: 모두 확인 후 마감
+
+3개 confirmed.
+
+확인:
+
+모든 항목을 확인했습니다.
+마감 완료 가능
+
+## 테스트 7: 날짜별 최종 마감 상태
+
+7월 15일 completed
+7월 16일 open
+
+날짜 변경 시 각 상태 복원.
+
+## 테스트 8: 완료 후 매출 수정
+
+7월 15일 completed 상태에서 배민 매출 수정 저장.
+
+확인:
+
+매출 데이터 수정
+salesStatus 유지
+closingStatus open
+completedAt null
+다시 마감 완료 가능
+
+## 테스트 9: 다른 날짜 보존
+
+7월 15일 상태 수정 시 7월 16일 상태 불변.
+
+## 테스트 10: 잘못된 JSON
+
+business-day-closing-status = "{broken"
+
+확인:
+
+예외 없음
+기본 상태 반환
+기존 잘못된 값 임의 삭제 없음
+
+## 테스트 11: 기존 전역 key 비간섭
+
+다음 key를 더 이상 읽거나 쓰지 않는지 검색.
+
+closing-sales-confirmed
+closing-expenses-confirmed
+closing-delivery-confirmed
+closing-completed
+
+## 테스트 12: 서버 환경
+
+window 없음.
+
+확인:
+
+예외 없음
+기본 상태 반환
+build 성공
+
+## 테스트 13: 모바일
+
+확인:
+
+최종 마감 버튼 항상 활성 상태가 명확함
+미확인 안내가 경고처럼 과도하지 않음
+완료 배지 날짜별 정상
+가로 스크롤 없음
+하단 내비게이션과 겹침 없음
+
+# 20. 기존 기능 비간섭
+
+변경하지 않는다.
+
+- business-day-context
+- business-day-sales 구조
+- 플랫폼별 매출 필드
+- 정산 계산 엔진
+- 수수료 설정
+- 예상 정산율
+- 날짜 선택 UX
+- 플랫폼별 입력값 저장
+
+# 21. 코드 품질
+
+- any 사용 금지
+- LocalStorage 직접 접근 중복 금지
+- 상태 계산 화면별 중복 최소화
+- 기존 매출 저장소 수정 금지
+- console.log 제품 코드 금지
+- 새 패키지 설치 금지
+- localStorage.clear() 금지
+- 대규모 리팩터링 금지
+- Hydration mismatch 방지
+
+# 22. 검증 명령
+
+cd frontend
+npm run lint
+npm run build
+
+실제 브라우저 또는 메모리 LocalStorage로 최소 두 날짜의 상태 분리 테스트를 수행한다.
+
+# 완료 후 보고 형식
+
+1. 생성한 파일
+2. 수정한 파일
+3. business-day-closing-status 저장 구조
+4. 구현한 저장소 함수
+5. 기존 전역 key 제거 결과
+6. 날짜별 카드 배지 규칙
+7. 진행률 계산 규칙
+8. 조건 없는 최종 마감 동작
+9. 완료 후 매출 수정 시 reopen 처리
+10. 두 날짜 분리 테스트
+11. lint 및 build
+12. 남은 한계
+13. 다음 Task
+
+남은 한계에 반드시 명시:
+
+- 비용 상세 기능은 아직 완성되지 않음
+- 배달대행사 날짜별 원장은 아직 없음
+- 비용 0원 확인과 배달대행 미발생 확인을 위한 confirmed-none 상태는 아직 없음
+- 최종 마감은 사용자의 수동 확정이며 미확인 항목이 남을 수 있음
+
+# 매우 중요한 제한
+
+이번 Task에서는 절대로 다음을 하지 마라.
+
+- 비용 타입 생성
+- 비용 저장소 생성
+- 비용 입력 화면 생성
+- 배달대행사 거래 원장 구현
+- 월말 재고 구현
+- 정산 엔진 변경
+- 수수료 설정 변경
+- 플랫폼 입력 필드 변경
+
+이번 Task의 목적은 날짜별 마감 상태를 확립하고, 최종 마감을 확인 단계와 분리해 사용자가 언제든 완료할 수 있도록 만드는 것이다.

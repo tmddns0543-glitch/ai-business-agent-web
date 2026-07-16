@@ -5,6 +5,16 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import MoneyField from "@/components/sales/money-field";
+import { getSelectedBusinessDate } from "@/lib/storage/business-day-storage";
+import { reopenBusinessDayClosing } from "@/lib/storage/closing-status-by-business-day-storage";
+import {
+  getPlatformSalesByBusinessDate,
+  savePlatformSalesByBusinessDate,
+} from "@/lib/storage/sales-by-business-day-storage";
+import {
+  formatBusinessDate,
+  type BusinessDate,
+} from "@/types/business-day";
 import type {
   SalesFormValues,
   SalesPlatformConfig,
@@ -12,44 +22,49 @@ import type {
 
 type SalesPlatformFormProps = {
   config: SalesPlatformConfig;
-  businessDay?: string;
 };
 
-function createEmptyValues(config: SalesPlatformConfig): SalesFormValues {
+function createFormValues(
+  config: SalesPlatformConfig,
+  saved: Readonly<Record<string, unknown>> = {},
+): SalesFormValues {
   return Object.fromEntries(
-    config.fields.map((field) => [field.key, 0]),
+    config.fields.map((field) => {
+      const savedValue = saved[field.key];
+
+      return [
+        field.key,
+        typeof savedValue === "number" &&
+        Number.isFinite(savedValue) &&
+        savedValue >= 0
+          ? savedValue
+          : 0,
+      ];
+    }),
   );
 }
 
-export default function SalesPlatformForm({
-  config,
-  businessDay = "2026년 7월 12일",
-}: SalesPlatformFormProps) {
+export default function SalesPlatformForm({ config }: SalesPlatformFormProps) {
   const router = useRouter();
 
   const [values, setValues] = useState<SalesFormValues>(() =>
-    createEmptyValues(config),
+    createFormValues(config),
   );
 
   const [isLoaded, setIsLoaded] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [businessDate, setBusinessDate] = useState<BusinessDate | null>(null);
 
   /* eslint-disable react-hooks/set-state-in-effect -- LocalStorage hydration runs only after the client mounts. */
   useEffect(() => {
-    const saved = window.localStorage.getItem(config.storageKey);
+    const selectedBusinessDate = getSelectedBusinessDate();
+    const saved = getPlatformSalesByBusinessDate(
+      selectedBusinessDate,
+      config.platformKey,
+    );
 
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved) as SalesFormValues;
-
-        setValues({
-          ...createEmptyValues(config),
-          ...parsed,
-        });
-      } catch {
-        window.localStorage.removeItem(config.storageKey);
-      }
-    }
+    setBusinessDate(selectedBusinessDate);
+    setValues(createFormValues(config, saved));
 
     setIsLoaded(true);
   }, [config]);
@@ -77,10 +92,20 @@ export default function SalesPlatformForm({
 
     setIsSaving(true);
 
-    window.localStorage.setItem(
-      config.storageKey,
-      JSON.stringify(values),
-    );
+    if (
+      !businessDate ||
+      !savePlatformSalesByBusinessDate(
+        businessDate,
+        config.platformKey,
+        values,
+      )
+    ) {
+      setIsSaving(false);
+      window.alert("매출을 저장하지 못했습니다. 다시 시도해주세요.");
+      return;
+    }
+
+    reopenBusinessDayClosing(businessDate);
 
     window.setTimeout(() => {
       router.push("/closing/sales");
@@ -96,7 +121,7 @@ export default function SalesPlatformForm({
       return;
     }
 
-    setValues(createEmptyValues(config));
+    setValues(createFormValues(config));
   }
 
   return (
@@ -112,7 +137,9 @@ export default function SalesPlatformForm({
           </Link>
 
           <p className="mt-5 text-sm font-medium text-slate-500">
-            {businessDay}
+            {businessDate
+              ? `${formatBusinessDate(businessDate)} 영업일에 저장됩니다.`
+              : "영업일을 불러오는 중입니다."}
           </p>
 
           <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950">

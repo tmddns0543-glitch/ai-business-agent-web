@@ -1,0 +1,499 @@
+AI Business Agent 2세대 웹서비스의 다음 구현 Task를 진행해줘.
+
+이번 Task에서는 비용 기능을 만들기 전에 필요한 공통 기반인 선택 영업일(Business Day) 구조만 구현한다.
+
+아직 기존 매출 저장 구조를 날짜별로 변경하지 않고, 비용 타입·저장소·화면도 만들지 않는다.
+
+## 반드시 먼저 읽을 파일
+
+다음 파일을 먼저 확인해라.
+
+frontend/src/app/closing/page.tsx
+frontend/src/app/closing/sales/page.tsx
+
+frontend/src/components/sales/sales-platform-form.tsx
+
+frontend/src/app/closing/sales/baemin/page.tsx
+frontend/src/app/closing/sales/coupang-eats/page.tsx
+frontend/src/app/closing/sales/yogiyo/page.tsx
+frontend/src/app/closing/sales/ddangyo/page.tsx
+frontend/src/app/closing/sales/general/page.tsx
+
+그리고 docs 폴더에서 다음 문서도 확인한다.
+
+docs/04_Infromation_Architecture.md
+docs/07_Expense_Input_UX.md
+docs/18_Screen_Flow.md
+docs/19_Screen_Blueprint.md
+
+실제 파일명이 다르면 역할이 같은 파일을 찾아 확인한다.
+
+## 이번 Task 목적
+
+다음 구조를 만든다.
+
+ /closing에서 영업일 선택
+ ↓
+ 선택한 영업일을 LocalStorage에 저장
+ ↓
+ 새로고침 후에도 유지
+ ↓
+ /closing/sales에서 같은 영업일 표시
+ ↓
+ 각 플랫폼 매출 입력 화면에서도 같은 영업일 표시
+
+이번 Task에서는 날짜를 표시하고 공유하는 기반만 구현한다.
+
+아직 다음은 하지 않는다.
+
+- 기존 sales-* key 변경
+- 날짜별 매출 저장
+- 기존 매출 마이그레이션
+- 날짜별 마감 상태
+- 비용 기능
+- 배달대행사 기능
+- 월말 재고
+
+# 1. 신규 타입 파일
+
+다음 파일을 생성한다.
+
+frontend/src/types/business-day.ts
+
+다음 역할의 타입을 정의한다.
+
+export type BusinessDate = string;
+
+export interface BusinessDayContext {
+  version: 1;
+  selectedBusinessDate: BusinessDate;
+}
+
+BusinessDate는 런타임에서 YYYY-MM-DD 형식을 검증할 수 있어야 한다.
+
+다음 함수 또는 동일 역할의 유틸리티를 함께 정의할 수 있다.
+
+isValidBusinessDate(value: unknown): value is BusinessDate
+
+검증 조건:
+
+- 문자열
+- YYYY-MM-DD 형식
+- 실제로 존재하는 날짜
+
+예:
+
+- 2026-07-16 → 유효
+- 2026-02-30 → 무효
+- 2026-7-1 → 무효
+- hello → 무효
+
+UTC 변환 때문에 날짜가 하루 밀리지 않도록 주의한다.
+
+# 2. 신규 저장소 파일
+
+다음 파일을 생성한다.
+
+frontend/src/lib/storage/business-day-storage.ts
+
+공식 LocalStorage key:
+
+business-day-context
+
+상수로 export한다.
+
+BUSINESS_DAY_CONTEXT_STORAGE_KEY
+
+## 구현 함수
+
+### getTodayBusinessDate()
+
+브라우저 또는 로컬 시간 기준 오늘 날짜를 YYYY-MM-DD로 반환한다.
+
+toISOString()을 그대로 사용해 UTC 날짜를 가져오지 않는다.
+
+사용자 로컬 날짜 기준이어야 한다.
+
+### getSelectedBusinessDate()
+
+역할:
+
+LocalStorage 조회
+↓
+정상 구조·버전·날짜 검증
+↓
+정상이면 selectedBusinessDate 반환
+↓
+없거나 잘못되면 오늘 날짜 반환
+
+서버 환경에서는 LocalStorage에 접근하지 않고 오늘 날짜를 반환한다.
+
+### setSelectedBusinessDate(date)
+
+역할:
+
+날짜 검증
+↓
+정상일 때만 LocalStorage 저장
+↓
+저장 성공 여부 반환
+
+잘못된 날짜는 저장하지 않는다.
+
+### getBusinessDayContext()
+
+필요하다면 완성된 BusinessDayContext를 반환하는 함수도 제공한다.
+
+## 오류 처리
+
+다음 경우 예외 없이 오늘 날짜를 반환한다.
+
+- key 없음
+- JSON 파싱 실패
+- null
+- 배열
+- 문자열
+- version 없음
+- version 불일치
+- selectedBusinessDate 없음
+- 잘못된 날짜
+- LocalStorage 접근 오류
+- 서버 환경
+
+잘못된 저장값을 임의로 삭제하지 않는다.
+
+# 3. /closing 화면 수정
+
+다음 파일을 수정한다.
+
+frontend/src/app/closing/page.tsx
+
+## 현재 하드코딩 날짜 제거
+
+현재 화면에 하드코딩된 2026년 7월 12일 영업일 또는 유사 문구를 제거한다.
+
+## 선택 영업일 state
+
+마운트 후 getSelectedBusinessDate()로 현재 영업일을 읽어 state에 저장한다.
+
+Hydration 오류가 없도록 한다.
+
+## 날짜 선택 UI
+
+마감 화면 상단에 영업일 선택 영역을 만든다.
+
+권장 형태:
+
+영업일
+[ 2026-07-16 ]
+
+HTML input type="date"를 사용해도 된다.
+
+모바일에서 사용하기 쉬워야 한다.
+
+선택한 날짜가 바뀌면 setSelectedBusinessDate()로 저장하고 현재 state를 갱신한다.
+
+이번 Task에서는 날짜 변경 시 매출이나 완료 상태를 다시 불러오지 않는다.
+
+다만 다음 안내를 작은 문구로 표시한다.
+
+선택한 영업일 기준으로 매출·비용·마감 데이터를 확인합니다.
+
+## 날짜 표시 형식
+
+사용자 화면에서는 다음처럼 표시한다.
+
+2026년 7월 16일 영업일
+
+입력값은 내부적으로 2026-07-16을 사용한다.
+
+날짜 포맷 함수는 파일 내부 또는 공통 유틸로 둘 수 있다.
+
+# 4. /closing/sales 화면 수정
+
+다음 파일을 수정한다.
+
+frontend/src/app/closing/sales/page.tsx
+
+현재 하드코딩된 날짜를 제거하고 선택 영업일을 표시한다.
+
+마운트 후 getSelectedBusinessDate()를 사용한다.
+
+표시 예:
+
+2026년 7월 16일
+
+이번 Task에서는 날짜 선택 UI를 /closing/sales에 추가하지 않는다.
+
+날짜 변경은 /closing에서만 한다.
+
+필요하면 다음 안내를 표시한다.
+
+/closing에서 선택한 영업일입니다.
+
+# 5. 플랫폼 매출 입력 화면 수정
+
+각 플랫폼 상세 화면에서 실제 날짜 표시가 어디에서 생성되는지 확인한다.
+
+가능한 구조:
+
+- 각 page.tsx에서 props 전달
+- SalesPlatformForm 내부 기본 날짜
+- 하드코딩 문자열
+
+가장 중복이 적은 위치에서 다음을 구현한다.
+
+현재 선택 영업일 읽기
+→ 플랫폼 입력 화면에 표시
+
+가능하면 SalesPlatformForm이 선택 영업일을 직접 읽거나, 각 페이지에서 businessDate를 전달하는 방식 중 현재 구조에 맞는 안전한 방식을 선택한다.
+
+수정 가능 파일:
+
+frontend/src/components/sales/sales-platform-form.tsx
+
+frontend/src/app/closing/sales/baemin/page.tsx
+frontend/src/app/closing/sales/coupang-eats/page.tsx
+frontend/src/app/closing/sales/yogiyo/page.tsx
+frontend/src/app/closing/sales/ddangyo/page.tsx
+frontend/src/app/closing/sales/general/page.tsx
+
+필요한 파일만 최소 수정한다.
+
+현재 하드코딩된 날짜 또는 기본값 2026년 7월 12일을 제거한다.
+
+플랫폼 입력 화면에서는 날짜를 수정할 수 없고 읽기 전용으로 표시한다.
+
+예:
+
+2026년 7월 16일 영업일에 저장됩니다.
+
+# 6. 날짜 변경 동작
+
+이번 Task의 범위에서는 날짜 변경 시 다음만 보장한다.
+
+/closing에서 날짜 선택
+↓
+LocalStorage 저장
+↓
+/closing/sales에서 같은 날짜 표시
+↓
+플랫폼 입력 화면에서 같은 날짜 표시
+↓
+새로고침 후 유지
+
+아직 실제 매출 저장값은 날짜별로 바뀌지 않는다.
+
+따라서 작업 결과 보고에는 다음 한계를 명확히 적는다.
+
+- 현재 영업일 선택은 화면 공유 기반만 구현됨
+- 기존 sales-* 데이터는 아직 날짜별로 분리되지 않음
+
+# 7. 서버·클라이언트 안전성
+
+다음을 지킨다.
+
+- 서버 환경에서 window 접근 금지
+- 서버 환경에서 localStorage 접근 금지
+- Hydration mismatch 방지
+- 잘못된 날짜에서 화면 오류 금지
+- NaN 날짜 표시 금지
+- Invalid Date 표시 금지
+
+필요한 페이지는 "use client"를 사용한다.
+
+이미 클라이언트 컴포넌트라면 중복 추가하지 않는다.
+
+# 8. 기존 기능 비간섭
+
+이번 Task에서 다음은 변경하지 않는다.
+
+- sales-* LocalStorage key
+- business-fee-settings
+- 정산 계산 엔진
+- 예상 공제액
+- 예상 정산금액
+- 매출 입력 저장 구조
+- closing-sales-confirmed
+- closing-expenses-confirmed
+- closing-delivery-confirmed
+- closing-completed
+- 마감 진행률
+- 수수료 설정 화면
+
+날짜를 바꿨다고 자동으로 완료 상태를 초기화하지 않는다.
+
+아직 날짜별 마감 상태가 없기 때문이다.
+
+# 9. 필수 테스트
+
+## 테스트 1: 최초 실행
+
+business-day-context가 없는 상태.
+
+확인:
+
+- 오늘 로컬 날짜가 선택됨
+- /closing에 오늘 날짜 표시
+- 오류 없음
+
+## 테스트 2: 날짜 변경
+
+/closing에서 날짜를 다른 날짜로 변경한다.
+
+확인:
+
+- business-day-context 저장
+- 화면 즉시 변경
+
+## 테스트 3: 새로고침
+
+날짜 변경 후 새로고침.
+
+확인:
+
+- 선택 날짜 유지
+
+## 테스트 4: 화면 간 일치
+
+다음 화면 모두 같은 영업일을 표시해야 한다.
+
+/closing
+/closing/sales
+/closing/sales/baemin
+/closing/sales/coupang-eats
+/closing/sales/yogiyo
+/closing/sales/ddangyo
+/closing/sales/general
+
+## 테스트 5: 잘못된 JSON
+
+다음 값을 저장한다.
+
+business-day-context = "{broken"
+
+확인:
+
+- 오류 없음
+- 오늘 날짜로 복구
+
+## 테스트 6: 잘못된 날짜
+
+예:
+
+{
+  "version": 1,
+  "selectedBusinessDate": "2026-02-30"
+}
+
+확인:
+
+- 오늘 날짜로 복구
+
+## 테스트 7: UTC 날짜 밀림
+
+한국 시간 기준 자정 전후에도 로컬 날짜가 선택되는지 확인한다.
+
+toISOString().slice(0, 10)만으로 오늘 날짜를 만들지 않았는지 확인한다.
+
+## 테스트 8: 기존 매출 기능
+
+기존 매출 입력·저장·정산 결과가 이전과 동일하게 작동하는지 확인한다.
+
+- 매출 저장
+- 예상 공제액
+- 예상 정산금액
+- 매출 확인 완료
+
+## 테스트 9: 모바일
+
+확인:
+
+- date 입력 터치 가능
+- 가로 스크롤 없음
+- 날짜 텍스트 겹침 없음
+- 카드 클릭 영역 유지
+
+# 10. 검증 명령
+
+작업 후 실행한다.
+
+cd frontend
+npm run lint
+npm run build
+
+새 패키지는 설치하지 않는다.
+
+# 완료 후 보고 형식
+
+## 1. 생성한 파일
+
+실제 경로
+
+## 2. 수정한 파일
+
+실제 경로와 수정 이유
+
+## 3. 영업일 저장 구조
+
+LocalStorage key와 저장 예시
+
+## 4. 구현한 함수
+
+각 함수의 역할
+
+## 5. 화면별 날짜 표시
+
+다음 화면별 결과를 정리한다.
+
+/closing
+/closing/sales
+플랫폼 입력 화면
+
+## 6. 날짜 변경·새로고침 테스트
+
+실제 테스트 결과
+
+## 7. 잘못된 저장값 처리
+
+JSON 오류와 날짜 오류 처리 결과
+
+## 8. UTC 날짜 처리
+
+로컬 날짜 생성 방식 설명
+
+## 9. 기존 기능 영향
+
+매출 입력·정산·마감 진행률 영향 여부
+
+## 10. 남은 한계
+
+반드시 다음을 명시한다.
+
+- 기존 sales-*는 아직 날짜별 저장이 아님
+- 완료 상태도 아직 날짜별 저장이 아님
+- 날짜를 바꿔도 현재 매출값은 동일하게 보일 수 있음
+
+## 11. 다음 Task
+
+다음 단계인 날짜별 매출 저장소와 기존 sales-* 마이그레이션 구현에 필요한 예상 파일만 제안한다.
+
+아직 구현하지 않는다.
+
+# 매우 중요한 제한
+
+이번 Task에서는 절대로 다음을 하지 마라.
+
+- 기존 sales-* key 삭제
+- 기존 매출 데이터 이전
+- 날짜별 매출 저장 구현
+- 날짜별 마감 상태 구현
+- 비용 타입 생성
+- 비용 저장소 생성
+- 비용 화면 생성
+- 배달대행사 구현
+- 월말 재고 구현
+- 정산 계산 엔진 수정
+- 마감 진행률 변경
+
+이번 Task의 목적은 전체 서비스가 공유할 선택 영업일 기반을 만드는 것뿐이다.
