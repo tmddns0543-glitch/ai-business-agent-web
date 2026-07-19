@@ -23,6 +23,7 @@ import {
   getSalesSettlementByBusinessDate,
 } from "@/lib/settlement/get-sales-settlement-from-storage";
 import {
+  getTodayBusinessDate,
   getSelectedBusinessDate,
   setSelectedBusinessDate,
 } from "@/lib/storage/business-day-storage";
@@ -332,6 +333,7 @@ export default function ClosingPage() {
     null,
   );
   const [quickActionError, setQuickActionError] = useState<string | null>(null);
+  const [isNoSalesDialogOpen, setIsNoSalesDialogOpen] = useState(false);
   const [deletionTarget, setDeletionTarget] =
     useState<DeletionTarget | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -347,7 +349,16 @@ export default function ClosingPage() {
 
   /* eslint-disable react-hooks/set-state-in-effect -- LocalStorage hydration runs only after the client mounts. */
   useEffect(() => {
-    const savedBusinessDate = getSelectedBusinessDate();
+    const isExternalEntry =
+      new URLSearchParams(window.location.search).get("entry") === "external";
+    const savedBusinessDate = isExternalEntry
+      ? getTodayBusinessDate()
+      : getSelectedBusinessDate();
+
+    if (isExternalEntry) {
+      setSelectedBusinessDate(savedBusinessDate);
+      window.history.replaceState(null, "", "/closing");
+    }
 
     setSelectedBusinessDateState(savedBusinessDate);
     setSalesSummary(getSalesSettlementByBusinessDate(savedBusinessDate));
@@ -384,7 +395,7 @@ export default function ClosingPage() {
     (deliverySummary?.operatingExpenseTotal ?? 0);
   const simpleProfit = salesTotal - expectedTotalOperatingCost;
   const salesCompleted =
-    status?.salesStatus === "confirmed" && salesTotal > 0;
+    status?.salesStatus === "confirmed" && (salesTotal > 0 || !hasSalesData);
   const expenseTransactionCount = expenseSummary?.transactionCount ?? 0;
   const expenseHasData = expenseTransactionCount > 0;
   const expenseCompleted =
@@ -596,6 +607,54 @@ export default function ClosingPage() {
     setStatus(getClosingStatusByBusinessDate(selectedBusinessDate));
   }
 
+  function openNoSalesDialog(event: MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (!selectedBusinessDate) {
+      return;
+    }
+
+    const latestSales = getSalesByBusinessDate(selectedBusinessDate);
+
+    if (Object.keys(latestSales).length > 0) {
+      setHasSalesData(true);
+      setSalesSummary(getSalesSettlementByBusinessDate(selectedBusinessDate));
+      setQuickActionError("이미 입력된 매출이 있습니다.");
+      return;
+    }
+
+    setQuickActionError(null);
+    setIsNoSalesDialogOpen(true);
+  }
+
+  function confirmNoSalesQuick() {
+    if (!selectedBusinessDate) {
+      return;
+    }
+
+    const latestSales = getSalesByBusinessDate(selectedBusinessDate);
+
+    if (Object.keys(latestSales).length > 0) {
+      setHasSalesData(true);
+      setSalesSummary(getSalesSettlementByBusinessDate(selectedBusinessDate));
+      setQuickActionError("이미 입력된 매출이 있습니다.");
+      setIsNoSalesDialogOpen(false);
+      return;
+    }
+
+    if (!setSectionConfirmed(selectedBusinessDate, "sales")) {
+      setQuickActionError("매출 없음 상태를 저장하지 못했습니다.");
+      return;
+    }
+
+    setQuickActionError(null);
+    setHasSalesData(false);
+    setSalesSummary(getSalesSettlementByBusinessDate(selectedBusinessDate));
+    setStatus(getClosingStatusByBusinessDate(selectedBusinessDate));
+    setIsNoSalesDialogOpen(false);
+  }
+
   function confirmNoDeliveryQuick(event: MouseEvent<HTMLButtonElement>) {
     event.preventDefault();
     event.stopPropagation();
@@ -768,7 +827,9 @@ export default function ClosingPage() {
             </p>
 
             <h2 className="mt-1 text-2xl font-bold">
-              {closingCompleted ? "마감 완료" : "마감 진행 중"}
+              {closingCompleted
+                ? `${formatClosingButtonDate(selectedBusinessDate)} 마감 완료`
+                : "마감 진행 중"}
             </h2>
 
             <p className="mt-1.5 text-xs leading-5 text-emerald-50">
@@ -818,6 +879,14 @@ export default function ClosingPage() {
             completed={salesCompleted}
             href="/closing/sales"
             actionLabel={salesTotal > 0 ? "확인 필요" : "미입력"}
+            quickAction={
+              !hasSalesData && status.salesStatus === "unconfirmed"
+                ? {
+                    label: "오늘 매출 없음",
+                    onClick: openNoSalesDialog,
+                  }
+                : undefined
+            }
             deleteAction={
               hasSalesData || status.salesStatus === "confirmed"
                 ? {
@@ -1003,17 +1072,9 @@ export default function ClosingPage() {
         </section>
 
         <section className="mt-7 border-t border-slate-200 pt-5">
+          {!closingCompleted && (
           <p className="text-center text-sm font-medium text-slate-600">
-            {closingCompleted ? (
-              <>
-                <span className="block">마감을 완료했습니다.</span>
-                {unconfirmedCount > 0 && (
-                  <span className="mt-1 block text-xs text-slate-500">
-                    아직 확인하지 않은 항목이 {unconfirmedCount}개 있습니다.
-                  </span>
-                )}
-              </>
-            ) : inventoryRequired && !inventoryCompleted
+            {inventoryRequired && !inventoryCompleted
               ? "월말재고를 입력하거나 재고 없음을 확인해 주세요."
               : allCompleted
               ? "모든 항목을 확인했습니다."
@@ -1028,8 +1089,9 @@ export default function ClosingPage() {
                 </>
               )}
           </p>
+          )}
 
-          <button
+          {!closingCompleted && <button
             type="button"
             onClick={completeClosing}
             disabled={closingCompleted || isCompletingClosing || !allCompleted}
@@ -1041,7 +1103,7 @@ export default function ClosingPage() {
           >
             {formatClosingButtonDate(selectedBusinessDate)} 마감{" "}
             {closingCompleted ? "완료" : "완료하기"}
-          </button>
+          </button>}
 
           {closingCompleted && (
             <button
@@ -1122,6 +1184,56 @@ export default function ClosingPage() {
                   className="min-h-12 rounded-xl bg-slate-900 px-4 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-wait disabled:bg-slate-500"
                 >
                   {isCancelingClosing ? "취소 중..." : "마감 취소"}
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
+
+        {isNoSalesDialogOpen && (
+          <div
+            className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/40 px-4 py-6 sm:items-center"
+            role="presentation"
+          >
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="no-sales-quick-dialog-title"
+              className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl"
+            >
+              <h2
+                id="no-sales-quick-dialog-title"
+                className="text-lg font-bold text-slate-950"
+              >
+                오늘 매출이 없었습니까?
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                선택한 영업일의 매출을 0원으로 확인합니다.
+                <br />
+                매출 거래는 새로 생성되지 않습니다.
+              </p>
+              {quickActionError && (
+                <p className="mt-3 rounded-xl bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700">
+                  {quickActionError}
+                </p>
+              )}
+              <div className="mt-5 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuickActionError(null);
+                    setIsNoSalesDialogOpen(false);
+                  }}
+                  className="min-h-12 rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-600 transition hover:bg-slate-50"
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmNoSalesQuick}
+                  className="min-h-12 rounded-xl bg-slate-900 px-4 text-sm font-bold text-white transition hover:bg-slate-800"
+                >
+                  매출 없음 확인
                 </button>
               </div>
             </section>

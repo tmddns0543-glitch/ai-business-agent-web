@@ -89,6 +89,7 @@ export default function MaterialPurchasePage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isExitDialogOpen, setIsExitDialogOpen] = useState(false);
 
   /* eslint-disable react-hooks/set-state-in-effect -- LocalStorage hydration runs only after the client mounts. */
   useEffect(() => {
@@ -187,6 +188,43 @@ export default function MaterialPurchasePage() {
     return setExpenseUnconfirmed(date);
   }
 
+  function hasUnsavedInput(): boolean {
+    const cleanedVendorName = cleanMaterialVendorName(vendorName);
+    const trimmedMemo = memo.trim();
+
+    if (!editingId) {
+      return cleanedVendorName !== "" || amount !== 0 || trimmedMemo !== "";
+    }
+
+    const existingTransaction = transactions.find(
+      ({ id }) => id === editingId,
+    );
+
+    if (!existingTransaction) {
+      return true;
+    }
+
+    return (
+      normalizeMaterialVendorName(existingTransaction.vendorName ?? "") !==
+        normalizeMaterialVendorName(cleanedVendorName) ||
+      existingTransaction.amount !== amount ||
+      (existingTransaction.memo ?? "").trim() !== trimmedMemo
+    );
+  }
+
+  function finishMaterialPurchaseInput() {
+    if (isSaving) {
+      return;
+    }
+
+    if (hasUnsavedInput()) {
+      setIsExitDialogOpen(true);
+      return;
+    }
+
+    router.push("/closing/expenses");
+  }
+
   function saveTransaction() {
     if (!businessDate || isSaving) {
       return;
@@ -232,7 +270,8 @@ export default function MaterialPurchasePage() {
         existingTransaction.taxTreatment === "taxable" &&
         existingTransaction.inventoryApplied === false
       ) {
-        router.push("/closing/expenses");
+        setMessage("변경된 내용이 없습니다. 계속 입력할 수 있습니다.");
+        setIsSaving(false);
         return;
       }
 
@@ -262,7 +301,7 @@ export default function MaterialPurchasePage() {
         }
         refreshTransactions(businessDate);
         resetForm();
-        router.push("/closing/expenses");
+        setMessage("원재료 매입을 저장했습니다. 계속 입력할 수 있습니다.");
       } else {
         setError("원재료 매입을 저장하지 못했습니다. 다시 시도해주세요.");
       }
@@ -299,7 +338,7 @@ export default function MaterialPurchasePage() {
       refreshVendorSuggestions();
       refreshTransactions(businessDate);
       resetForm();
-      router.push("/closing/expenses");
+      setMessage("원재료 매입을 저장했습니다. 계속 입력할 수 있습니다.");
     } else {
       setError("원재료 매입을 저장하지 못했습니다. 다시 시도해주세요.");
     }
@@ -684,7 +723,58 @@ export default function MaterialPurchasePage() {
           )}
         </section>
 
+        <button
+          type="button"
+          onClick={finishMaterialPurchaseInput}
+          disabled={isSaving}
+          className="mt-6 min-h-14 w-full rounded-2xl bg-slate-900 px-4 text-base font-bold text-white transition hover:bg-slate-800 active:scale-[0.99] disabled:cursor-wait disabled:bg-slate-500"
+        >
+          원재료 매입 입력 완료
+        </button>
+
       </div>
+
+      {isExitDialogOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 px-4 py-6 sm:items-center"
+          role="presentation"
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="material-purchase-exit-dialog-title"
+            className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl"
+          >
+            <h2
+              id="material-purchase-exit-dialog-title"
+              className="text-lg font-bold text-slate-950"
+            >
+              저장하지 않은 입력값이 있습니다.
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              현재 작성 중인 원재료매입은 저장되지 않았습니다.
+              <br />
+              입력을 종료하고 비용 화면으로 이동하시겠습니까?
+            </p>
+            <div className="mt-5 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setIsExitDialogOpen(false)}
+                className="min-h-12 rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-600 transition hover:bg-slate-50"
+              >
+                계속 입력
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push("/closing/expenses")}
+                className="min-h-12 rounded-xl bg-slate-900 px-3 text-sm font-bold text-white transition hover:bg-slate-800"
+              >
+                저장하지 않고 이동
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

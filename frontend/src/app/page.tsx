@@ -1,8 +1,39 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
+
+import { getTodayBusinessDate } from "@/lib/storage/business-day-storage";
+import { getClosingStatusByBusinessDate } from "@/lib/storage/closing-status-by-business-day-storage";
+import type { BusinessDate } from "@/types/business-day";
+
+function getCurrentMonthUncompletedDates(): BusinessDate[] {
+  const today = getTodayBusinessDate();
+  const [year, month, todayNumber] = today.split("-").map(Number);
+
+  return Array.from({ length: Math.max(0, todayNumber - 1) }, (_, index) => {
+    const day = String(index + 1).padStart(2, "0");
+    return `${year}-${String(month).padStart(2, "0")}-${day}`;
+  }).filter(
+    (businessDate) =>
+      getClosingStatusByBusinessDate(businessDate).closingStatus !==
+      "completed",
+  );
+}
 
 export default function HomePage() {
+  const [uncompletedDates, setUncompletedDates] = useState<BusinessDate[]>([]);
+  const [isClosingStatusLoaded, setIsClosingStatusLoaded] = useState(false);
+
+  /* eslint-disable react-hooks/set-state-in-effect -- LocalStorage closing status hydrates after mount. */
+  useEffect(() => {
+    setUncompletedDates(getCurrentMonthUncompletedDates());
+    setIsClosingStatusLoaded(true);
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  const month = new Date().getMonth() + 1;
+
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-6">
       <div className="mx-auto min-h-[calc(100vh-3rem)] max-w-md rounded-3xl bg-white p-5 shadow-sm">
@@ -26,12 +57,53 @@ export default function HomePage() {
           </p>
 
           <Link
-            href="/closing"
+            href="/closing?entry=external"
             className="mt-6 block rounded-2xl bg-white px-4 py-4 text-center font-semibold text-indigo-700"
           >
             마감 시작하기
           </Link>
         </section>
+
+        <Link
+          href="/closing?entry=external"
+          className="mb-5 block rounded-2xl border border-slate-200 p-5 transition hover:border-indigo-200"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">
+                {month}월 마감 확인
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                오늘을 제외한 이번 달 마감 현황입니다.
+              </p>
+            </div>
+            {isClosingStatusLoaded && uncompletedDates.length > 0 && (
+              <span className="shrink-0 rounded-full bg-orange-50 px-2.5 py-1 text-xs font-bold text-orange-600">
+                미완료 {uncompletedDates.length}일
+              </span>
+            )}
+          </div>
+
+          {isClosingStatusLoaded &&
+            (uncompletedDates.length === 0 ? (
+              <p className="mt-4 text-sm font-semibold text-emerald-600">
+                {month}월 마감을 모두 완료했습니다.
+              </p>
+            ) : (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {uncompletedDates.slice(0, 5).map((date) => (
+                  <span key={date} className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600">
+                    {month}월 {Number(date.slice(8))}일
+                  </span>
+                ))}
+                {uncompletedDates.length > 5 && (
+                  <span className="px-1 py-1.5 text-xs font-semibold text-slate-400">
+                    외 {uncompletedDates.length - 5}일
+                  </span>
+                )}
+              </div>
+            ))}
+        </Link>
 
         <section className="mb-5">
           <h2 className="mb-3 text-lg font-bold text-slate-900">
@@ -92,7 +164,7 @@ export default function HomePage() {
           </Link>
 
           <Link
-            href="/closing"
+            href="/closing?entry=external"
             className="text-sm text-slate-500"
           >
             마감

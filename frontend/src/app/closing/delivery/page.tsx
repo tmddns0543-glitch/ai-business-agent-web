@@ -325,7 +325,7 @@ export default function DeliveryPage() {
     cardData.forEach(({ agency, charge }) => {
       if (!charge.valid) {
         nextErrors[agency.id] =
-          "충전수수료는 결제한 금액보다 클 수 없습니다.";
+          "충전수수료는 충전한 금액보다 클 수 없습니다.";
       }
     });
 
@@ -486,16 +486,16 @@ export default function DeliveryPage() {
                   </div>
 
                   <div className="mt-4">
-                    <MoneyInput label="결제한 금액" value={agencyValues.paymentAmount} onChange={(value) => updateValue(agency.id, "paymentAmount", value)} />
+                    <MoneyInput label="충전한 금액" value={agencyValues.paymentAmount} onChange={(value) => updateValue(agency.id, "paymentAmount", value)} />
                     <MoneyInput label="충전 수수료" value={agencyValues.chargeFee} onChange={(value) => updateValue(agency.id, "chargeFee", value)} />
                   </div>
 
                   <div className="mt-2 rounded-xl bg-indigo-50 p-3 text-xs">
                     <p className="leading-5 text-indigo-700">
-                      {agency.chargeFeeMode === "deduct-from-payment" ? "결제한 금액에서 수수료를 차감한 금액이 캐시에 충전됩니다." : "입력한 금액 전액이 캐시에 충전되고 수수료가 별도로 결제됩니다."}
+                      {agency.chargeFeeMode === "deduct-from-payment" ? "충전한 금액에서 수수료를 차감한 금액이 캐시에 충전됩니다." : "충전한 금액 전액이 캐시에 충전되고 수수료가 별도로 결제됩니다."}
                     </p>
                     <div className="mt-2 space-y-1 border-t border-indigo-100 pt-2">
-                      <div className="flex justify-between gap-3"><span className="text-slate-500">{agency.chargeFeeMode === "deduct-from-payment" ? "외부 결제액" : "충전 결제액"}</span><span className="font-bold text-slate-700">{formatMoney(charge.paymentAmount)}</span></div>
+                      <div className="flex justify-between gap-3"><span className="text-slate-500">충전한 금액</span><span className="font-bold text-slate-700">{formatMoney(charge.paymentAmount)}</span></div>
                       {agency.chargeFeeMode === "additional-payment" && <div className="flex justify-between gap-3"><span className="text-slate-500">수수료 포함 외부 결제액</span><span className="font-bold text-slate-700">{formatMoney(charge.externalPaymentTotal)}</span></div>}
                       <div className="flex justify-between gap-3"><span className="text-slate-500">실제 충전 캐시</span><span className="font-bold text-indigo-700">{formatMoney(charge.actualCashCharge)}</span></div>
                     </div>

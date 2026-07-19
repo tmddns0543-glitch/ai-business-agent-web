@@ -108,15 +108,7 @@ export function DeliveryAgencySettingForm({
       return;
     }
 
-    if (!agency) {
-      router.push("/more/store/delivery-agencies");
-      return;
-    }
-
-    setName(cleanedName);
-    setInitialCashBalance(String(balance));
-    setMessage("배달대행사 설정을 저장했습니다.");
-    setIsSaving(false);
+    router.push("/more/store/delivery-agencies");
   }
 
   return (

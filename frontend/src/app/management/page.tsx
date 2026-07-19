@@ -124,7 +124,7 @@ export default function ManagementPage() {
           <div className="mt-3 flex justify-between gap-3 border-t border-slate-200 pt-3"><span className="font-bold text-slate-700">예상 총 운영비용</span><strong className="text-indigo-600">{result.totalOperatingCost === null ? "미확정" : formatMoney(result.totalOperatingCost)}</strong></div>
         </section>
 
-        <nav className="fixed bottom-4 left-1/2 z-40 flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 justify-around rounded-2xl border border-slate-200 bg-white/95 px-3 py-3 shadow-lg"><Link href="/" className="px-4 py-2 text-sm text-slate-500">홈</Link><Link href="/closing" className="px-4 py-2 text-sm text-slate-500">마감</Link><Link href="/management" className="px-4 py-2 text-sm font-bold text-indigo-600">경영</Link><Link href="/more" className="px-4 py-2 text-sm text-slate-500">더보기</Link></nav>
+        <nav className="fixed bottom-4 left-1/2 z-40 flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 justify-around rounded-2xl border border-slate-200 bg-white/95 px-3 py-3 shadow-lg"><Link href="/" className="px-4 py-2 text-sm text-slate-500">홈</Link><Link href="/closing?entry=external" className="px-4 py-2 text-sm text-slate-500">마감</Link><Link href="/management" className="px-4 py-2 text-sm font-bold text-indigo-600">경영</Link><Link href="/more" className="px-4 py-2 text-sm text-slate-500">더보기</Link></nav>
       </div>
     </main>
   );

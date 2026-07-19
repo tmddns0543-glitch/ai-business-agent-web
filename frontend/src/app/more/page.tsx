@@ -59,7 +59,7 @@ export default function MorePage() {
           </Link>
 
           <Link
-            href="/closing"
+            href="/closing?entry=external"
             className="px-4 py-2 text-sm text-slate-500"
           >
             마감

@@ -11,7 +11,10 @@ import {
 } from "@/lib/settlement/calculate-settlement-rate";
 import { getSalesSettlementFromStorage } from "@/lib/settlement/get-sales-settlement-from-storage";
 import { getSelectedBusinessDate } from "@/lib/storage/business-day-storage";
-import { setSectionConfirmed } from "@/lib/storage/closing-status-by-business-day-storage";
+import {
+  getClosingStatusByBusinessDate,
+  setSectionConfirmed,
+} from "@/lib/storage/closing-status-by-business-day-storage";
 import {
   formatBusinessDate,
   type BusinessDate,
@@ -132,11 +135,20 @@ export default function SalesPage() {
   const [summary, setSummary] =
     useState<SalesSettlementSummary | null>(null);
   const [businessDate, setBusinessDate] = useState<BusinessDate | null>(null);
+  const [isNoSalesConfirmed, setIsNoSalesConfirmed] = useState(false);
+  const [isNoSalesDialogOpen, setIsNoSalesDialogOpen] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   /* eslint-disable react-hooks/set-state-in-effect -- LocalStorage hydration runs only after the client mounts. */
   useEffect(() => {
-    setBusinessDate(getSelectedBusinessDate());
+    const selectedBusinessDate = getSelectedBusinessDate();
+
+    setBusinessDate(selectedBusinessDate);
     setSummary(getSalesSettlementFromStorage());
+    setIsNoSalesConfirmed(
+      getClosingStatusByBusinessDate(selectedBusinessDate).salesStatus ===
+        "confirmed",
+    );
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -166,6 +178,23 @@ export default function SalesPage() {
     summary.total.expectedSettlement,
   );
   const hasSales = summary.total.grossSales > 0;
+
+  function confirmNoSales() {
+    if (hasSales || !businessDate) {
+      return;
+    }
+
+    if (!setSectionConfirmed(businessDate, "sales")) {
+      setStatusError("매출 없음 상태를 저장하지 못했습니다. 다시 시도해주세요.");
+      setIsNoSalesDialogOpen(false);
+      return;
+    }
+
+    setIsNoSalesConfirmed(true);
+    setStatusError(null);
+    setIsNoSalesDialogOpen(false);
+    router.push("/closing");
+  }
 
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-5">
@@ -285,20 +314,39 @@ export default function SalesPage() {
           />
         </section>
 
-        <button
-          type="button"
-          onClick={() => {
-            if (setSectionConfirmed(businessDate, "sales")) {
-              router.push("/closing");
-            } else {
-              window.alert("매출 확인 상태를 저장하지 못했습니다.");
-            }
-          }}
-          disabled={!hasSales}
-          className="mt-7 w-full rounded-2xl bg-indigo-600 px-4 py-4 text-center text-base font-bold text-white transition hover:bg-indigo-700 active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
-        >
-          {hasSales ? "매출 확인 완료" : "입력된 매출이 없습니다."}
-        </button>
+        {hasSales ? (
+          <button
+            type="button"
+            onClick={() => {
+              if (setSectionConfirmed(businessDate, "sales")) {
+                router.push("/closing");
+              } else {
+                setStatusError("매출 확인 상태를 저장하지 못했습니다.");
+              }
+            }}
+            className="mt-7 w-full rounded-2xl bg-indigo-600 px-4 py-4 text-center text-base font-bold text-white transition hover:bg-indigo-700 active:scale-[0.99]"
+          >
+            매출 확인 완료
+          </button>
+        ) : isNoSalesConfirmed ? (
+          <p className="mt-7 rounded-xl bg-emerald-50 px-4 py-4 text-center text-sm font-bold text-emerald-700">
+            오늘 매출 없음 확인 완료
+          </p>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setIsNoSalesDialogOpen(true)}
+            className="mt-7 w-full rounded-2xl bg-slate-900 px-4 py-4 text-center text-base font-bold text-white transition hover:bg-slate-800 active:scale-[0.99]"
+          >
+            오늘 매출 없음
+          </button>
+        )}
+
+        {statusError && (
+          <p className="mt-3 rounded-xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+            {statusError}
+          </p>
+        )}
 
         <nav className="fixed bottom-4 left-1/2 flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 justify-around rounded-2xl border border-slate-200 bg-white px-3 py-3 shadow-lg">
           <Link href="/" className="px-4 py-2 text-sm text-slate-500">
@@ -327,6 +375,27 @@ export default function SalesPage() {
           </Link>
         </nav>
       </div>
+
+      {isNoSalesDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 p-4 sm:items-center">
+          <div role="dialog" aria-modal="true" aria-labelledby="no-sales-dialog-title" className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl">
+            <h2 id="no-sales-dialog-title" className="text-lg font-bold text-slate-950">
+              오늘 매출이 없었습니까?
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              선택한 영업일의 매출을 0원으로 확인합니다. 저장된 매출 데이터가 있는 경우에는 사용할 수 없습니다.
+            </p>
+            <div className="mt-5 grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => setIsNoSalesDialogOpen(false)} className="min-h-12 rounded-xl border border-slate-200 text-sm font-bold text-slate-600">
+                취소
+              </button>
+              <button type="button" onClick={confirmNoSales} className="min-h-12 rounded-xl bg-slate-900 text-sm font-bold text-white">
+                매출 없음 확인
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
