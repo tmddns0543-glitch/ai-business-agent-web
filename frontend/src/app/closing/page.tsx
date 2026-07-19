@@ -12,6 +12,7 @@ import {
   getInventoryMonthFromBusinessDate,
   isCalendarMonthEnd,
 } from "@/lib/inventory/inventory-month";
+import { resolveBeginningInventory } from "@/lib/inventory/resolve-beginning-inventory";
 import { calculateDeliveryAgencyBalanceThroughDate } from "@/lib/delivery-agency/calculate-delivery-agency-balance";
 import type { SalesSettlementSummary } from "@/lib/settlement/calculate-sales-settlement";
 import {
@@ -67,7 +68,10 @@ import {
 import type { BusinessDayClosingStatus } from "@/types/closing-status-by-business-day";
 import type { ExpenseSummary } from "@/types/expense-storage";
 import type { DeliveryAgencySummary } from "@/types/delivery-agency";
-import type { MonthlyInventoryRecord } from "@/types/inventory";
+import type {
+  BeginningInventoryResolution,
+  MonthlyInventoryRecord,
+} from "@/types/inventory";
 import type { SettlementResult } from "@/types/settlement";
 
 function formatMoney(value: number) {
@@ -327,6 +331,8 @@ export default function ClosingPage() {
     useState(false);
   const [inventoryRecord, setInventoryRecord] =
     useState<MonthlyInventoryRecord | undefined>();
+  const [beginningInventory, setBeginningInventory] =
+    useState<BeginningInventoryResolution | null>(null);
   const [selectedBusinessDate, setSelectedBusinessDateState] =
     useState<BusinessDate | null>(null);
   const [businessDateError, setBusinessDateError] = useState<string | null>(
@@ -379,6 +385,11 @@ export default function ClosingPage() {
         getInventoryMonthFromBusinessDate(savedBusinessDate),
       ),
     );
+    setBeginningInventory(
+      resolveBeginningInventory(
+        getInventoryMonthFromBusinessDate(savedBusinessDate),
+      ),
+    );
     setStatus(getClosingStatusByBusinessDate(savedBusinessDate));
 
     setIsLoaded(true);
@@ -406,8 +417,12 @@ export default function ClosingPage() {
     inventoryProfitEnabled &&
     Boolean(selectedBusinessDate) &&
     isCalendarMonthEnd(selectedBusinessDate ?? "");
-  const inventoryCompleted =
+  const endingInventoryCompleted =
     inventoryRecord?.endingInventoryStatus === "confirmed";
+  const inventoryCompleted =
+    endingInventoryCompleted &&
+    beginningInventory !== null &&
+    beginningInventory.amount !== null;
 
   const completedCount = useMemo(() => {
     return [
@@ -448,6 +463,9 @@ export default function ClosingPage() {
       getMonthlyInventoryRecord(
         getInventoryMonthFromBusinessDate(businessDate),
       ),
+    );
+    setBeginningInventory(
+      resolveBeginningInventory(getInventoryMonthFromBusinessDate(businessDate)),
     );
     setStatus(getClosingStatusByBusinessDate(businessDate));
   }
@@ -714,6 +732,9 @@ export default function ClosingPage() {
     );
     setInventoryRecord(
       getMonthlyInventoryRecord(getInventoryMonthFromBusinessDate(date)),
+    );
+    setBeginningInventory(
+      resolveBeginningInventory(getInventoryMonthFromBusinessDate(date)),
     );
     setStatus(getClosingStatusByBusinessDate(date));
     setQuickActionError(null);
@@ -996,14 +1017,24 @@ export default function ClosingPage() {
                 {
                   label: "기초재고",
                   value:
-                    inventoryRecord?.beginningInventory === null ||
-                    inventoryRecord?.beginningInventory === undefined
-                      ? "미입력"
-                      : formatMoney(inventoryRecord.beginningInventory),
+                    beginningInventory?.amount === null ||
+                    beginningInventory === null
+                      ? "미확정"
+                      : formatMoney(beginningInventory.amount),
+                },
+                {
+                  label: "기초재고 출처",
+                  value:
+                    beginningInventory?.source === "previous-ending" &&
+                    beginningInventory.sourceMonth
+                      ? `${formatInventoryMonth(beginningInventory.sourceMonth)} 월말재고`
+                      : beginningInventory?.source === "explicit"
+                        ? "직접 입력"
+                        : "이전 달 재고 필요",
                 },
                 {
                   label: "월말재고",
-                  value: inventoryCompleted
+                  value: endingInventoryCompleted
                     ? formatMoney(inventoryRecord?.endingInventory ?? 0)
                     : "미입력",
                 },
@@ -1074,8 +1105,10 @@ export default function ClosingPage() {
         <section className="mt-7 border-t border-slate-200 pt-5">
           {!closingCompleted && (
           <p className="text-center text-sm font-medium text-slate-600">
-            {inventoryRequired && !inventoryCompleted
-              ? "월말재고를 입력하거나 재고 없음을 확인해 주세요."
+            {inventoryRequired && beginningInventory?.amount === null
+              ? "이전 달 월말재고가 없어 재료비를 계산할 수 없습니다. 이전 달 재고를 먼저 입력해 주세요."
+              : inventoryRequired && !endingInventoryCompleted
+                ? "월말재고를 입력하거나 재고 없음을 확인해 주세요."
               : allCompleted
               ? "모든 항목을 확인했습니다."
               : (

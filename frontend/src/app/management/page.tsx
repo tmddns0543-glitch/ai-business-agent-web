@@ -10,6 +10,7 @@ import {
   formatInventoryMonth,
   getCurrentInventoryMonth,
 } from "@/lib/inventory/inventory-month";
+import { resolveBeginningInventory } from "@/lib/inventory/resolve-beginning-inventory";
 import { getSalesSettlementByBusinessDate } from "@/lib/settlement/get-sales-settlement-from-storage";
 import { getAllDeliveryTransactions } from "@/lib/storage/delivery-agency-storage";
 import { getAllExpenseTransactions } from "@/lib/storage/expense-by-business-day-storage";
@@ -60,9 +61,11 @@ export default function ManagementPage() {
     );
     const inventoryEnabled = getStoreSettings().inventoryProfitEnabled;
     const inventory = getMonthlyInventoryRecord(month);
+    const beginningInventory = resolveBeginningInventory(month);
     const material = calculateMonthlyMaterialCost({
       materialPurchases: expenses.byGroup["material-purchase"],
       inventoryProfitEnabled: inventoryEnabled,
+      beginningInventory: beginningInventory.amount,
       inventoryRecord: inventory,
       monthEnded: month < getCurrentInventoryMonth(),
     });
@@ -82,6 +85,7 @@ export default function ManagementPage() {
       expenses,
       delivery,
       inventory,
+      beginningInventory,
       inventoryEnabled,
       material,
       totalOperatingCost,
@@ -111,13 +115,13 @@ export default function ManagementPage() {
         <header><Link href="/" className="inline-flex h-10 w-10 items-center justify-center rounded-full text-2xl text-slate-700 transition hover:bg-slate-100" aria-label="홈으로 돌아가기">‹</Link><h1 className="mt-5 text-3xl font-bold tracking-tight text-slate-950">경영성과</h1><p className="mt-2 text-sm leading-6 text-slate-500">월별 매출과 비용을 손익 기준으로 확인하세요.</p></header>
         <label className="mt-6 block"><span className="text-sm font-bold text-slate-800">조회 월</span><input type="month" value={month} onChange={(event) => setMonth(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-slate-200 px-3 text-sm font-semibold text-slate-900" /></label>
 
-        <section className="mt-5 rounded-2xl bg-indigo-600 p-5 text-white"><p className="text-xs text-indigo-100">{formatInventoryMonth(month)} 현재 단순 손익</p><p className="mt-2 text-3xl font-bold">{result.profit === null ? "계산 대기" : formatMoney(result.profit)}</p>{result.profit === null && <p className="mt-2 text-xs leading-5 text-indigo-100">기초재고와 월말재고를 입력하면 실제 재료비가 계산됩니다.</p>}</section>
+        <section className="mt-5 rounded-2xl bg-indigo-600 p-5 text-white"><p className="text-xs text-indigo-100">{formatInventoryMonth(month)} 현재 단순 손익</p><p className="mt-2 text-3xl font-bold">{result.profit === null ? "계산 대기" : formatMoney(result.profit)}</p>{result.profit === null && <p className="mt-2 text-xs leading-5 text-indigo-100">{result.beginningInventory.source === "missing" ? "이전 달 월말재고가 필요합니다." : "월말재고를 입력하면 실제 재료비가 계산됩니다."}</p>}</section>
 
         <section className="mt-4 space-y-2 rounded-2xl border border-slate-200 p-4 text-sm">
           <div className="flex justify-between gap-3"><span className="text-slate-500">총매출</span><strong>{formatMoney(result.sales.grossSales)}</strong></div>
           <div className="flex justify-between gap-3"><span className="text-slate-500">플랫폼 예상 공제액</span><strong>{formatMoney(result.sales.expectedDeduction)}</strong></div>
           <div className="flex justify-between gap-3"><span className="text-slate-500">{materialLabel}</span><strong>{result.material.materialCost === null ? "미확정" : formatMoney(result.material.materialCost)}</strong></div>
-          {result.inventoryEnabled && <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-500"><div className="flex justify-between"><span>기초재고</span><span>{result.inventory?.beginningInventory == null ? "미입력" : formatMoney(result.inventory.beginningInventory)}</span></div><div className="mt-1 flex justify-between"><span>재료매입</span><span>{formatMoney(result.material.materialPurchases)}</span></div><div className="mt-1 flex justify-between"><span>월말재고</span><span>{result.inventory?.endingInventory == null ? "미입력" : formatMoney(result.inventory.endingInventory)}</span></div></div>}
+          {result.inventoryEnabled && <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-500"><div className="flex justify-between"><span>기초재고</span><span>{result.beginningInventory.amount === null ? "미확정" : formatMoney(result.beginningInventory.amount)}</span></div>{result.beginningInventory.source === "previous-ending" && result.beginningInventory.sourceMonth && <p className="mt-1 text-right text-indigo-600">{formatInventoryMonth(result.beginningInventory.sourceMonth)} 월말재고 자동 반영</p>}<div className="mt-1 flex justify-between"><span>재료매입</span><span>{formatMoney(result.material.materialPurchases)}</span></div><div className="mt-1 flex justify-between"><span>월말재고</span><span>{result.inventory?.endingInventory == null ? "미입력" : formatMoney(result.inventory.endingInventory)}</span></div></div>}
           <div className="flex justify-between gap-3"><span className="text-slate-500">기타 운영비용</span><strong>{formatMoney(result.expenses.operatingExpenseTotal - result.material.materialPurchases)}</strong></div>
           <div className="flex justify-between gap-3"><span className="text-slate-500">실제 세금 납부</span><strong>{formatMoney(result.expenses.taxPaymentTotal)}</strong></div>
           <div className="flex justify-between gap-3"><span className="text-slate-500">배달대행 운영비</span><strong>{formatMoney(result.delivery.operatingExpenseTotal)}</strong></div>

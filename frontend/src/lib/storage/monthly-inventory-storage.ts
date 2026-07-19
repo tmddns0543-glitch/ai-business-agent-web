@@ -181,6 +181,62 @@ export function saveBeginningInventory(
   return updateRecord(month, { beginningInventory: amount });
 }
 
+export function moveBeginningInventory(
+  previousMonth: InventoryMonth,
+  nextMonth: InventoryMonth,
+  amount: number,
+): boolean {
+  if (
+    !isValidInventoryMonth(previousMonth) ||
+    !isValidInventoryMonth(nextMonth) ||
+    !Number.isSafeInteger(amount) ||
+    amount < 0
+  ) {
+    return false;
+  }
+
+  if (previousMonth === nextMonth) {
+    return saveBeginningInventory(nextMonth, amount);
+  }
+
+  const storage = getMonthlyInventoryRecords();
+  const previous = storage.records[previousMonth];
+
+  if (!previous || previous.beginningInventory === null) {
+    return false;
+  }
+
+  const now = new Date().toISOString();
+  const nextCurrent = storage.records[nextMonth];
+  const previousRecord = parseRecord({
+    ...previous,
+    beginningInventory: null,
+    updatedAt: now,
+  });
+  const nextRecord = parseRecord({
+    month: nextMonth,
+    endingInventory: null,
+    endingInventoryStatus: "unconfirmed",
+    createdAt: now,
+    ...nextCurrent,
+    beginningInventory: amount,
+    updatedAt: now,
+  });
+
+  if (!previousRecord || !nextRecord) {
+    return false;
+  }
+
+  return saveStorage({
+    version: STORAGE_VERSION,
+    records: {
+      ...storage.records,
+      [previousMonth]: previousRecord,
+      [nextMonth]: nextRecord,
+    },
+  });
+}
+
 export function saveEndingInventory(
   month: InventoryMonth,
   amount: number,

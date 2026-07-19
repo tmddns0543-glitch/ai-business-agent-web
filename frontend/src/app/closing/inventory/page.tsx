@@ -9,6 +9,7 @@ import {
   getInventoryMonthFromBusinessDate,
   isCalendarMonthEnd,
 } from "@/lib/inventory/inventory-month";
+import { resolveBeginningInventory } from "@/lib/inventory/resolve-beginning-inventory";
 import { getSelectedBusinessDate } from "@/lib/storage/business-day-storage";
 import { reopenBusinessDayClosing } from "@/lib/storage/closing-status-by-business-day-storage";
 import {
@@ -20,7 +21,10 @@ import {
 } from "@/lib/storage/monthly-inventory-storage";
 import { getStoreSettings } from "@/lib/storage/store-settings-storage";
 import type { BusinessDate } from "@/types/business-day";
-import type { MonthlyInventoryRecord } from "@/types/inventory";
+import type {
+  BeginningInventoryResolution,
+  MonthlyInventoryRecord,
+} from "@/types/inventory";
 
 function parseAmount(value: string): number | null {
   if (value.trim() === "") return null;
@@ -43,6 +47,8 @@ export default function ClosingInventoryPage() {
   const router = useRouter();
   const [businessDate, setBusinessDate] = useState<BusinessDate | null>(null);
   const [record, setRecord] = useState<MonthlyInventoryRecord | undefined>();
+  const [beginningInventory, setBeginningInventory] =
+    useState<BeginningInventoryResolution | null>(null);
   const [amount, setAmount] = useState("");
   const [available, setAvailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +65,7 @@ export default function ClosingInventoryPage() {
       getStoreSettings().inventoryProfitEnabled && isCalendarMonthEnd(date),
     );
     setRecord(saved);
+    setBeginningInventory(resolveBeginningInventory(month));
     setAmount(
       saved?.endingInventory === null || saved?.endingInventory === undefined
         ? ""
@@ -155,7 +162,7 @@ export default function ClosingInventoryPage() {
           <section className="mt-7 rounded-xl bg-slate-50 px-4 py-6 text-center"><p className="text-sm leading-6 text-slate-500">재고 손익 설정이 꺼져 있거나 선택한 영업일이 달력상 월 말일이 아닙니다.</p></section>
         ) : (
           <>
-            <section className="mt-7 rounded-2xl bg-indigo-50 p-4 text-sm"><p className="font-bold text-indigo-700">{formatInventoryMonth(month)}</p><div className="mt-3 flex justify-between border-t border-indigo-100 pt-3"><span className="text-slate-500">기초재고</span><span className="font-bold text-slate-800">{formatMoney(record?.beginningInventory)}</span></div></section>
+            <section className="mt-7 rounded-2xl bg-indigo-50 p-4 text-sm"><p className="font-bold text-indigo-700">{formatInventoryMonth(month)}</p><div className="mt-3 flex justify-between border-t border-indigo-100 pt-3"><span className="text-slate-500">기초재고</span><span className="font-bold text-slate-800">{beginningInventory?.amount == null ? "미확정" : formatMoney(beginningInventory.amount)}</span></div>{beginningInventory?.source === "previous-ending" && beginningInventory.sourceMonth && <p className="mt-2 text-right text-xs font-semibold text-indigo-600">{formatInventoryMonth(beginningInventory.sourceMonth)} 월말재고에서 자동 반영</p>}{beginningInventory?.source === "missing" && <p className="mt-2 text-xs font-semibold leading-5 text-rose-600">이전 달 월말재고를 먼저 입력해 주세요.</p>}</section>
             <label className="mt-5 block"><span className="text-sm font-bold text-slate-800">월말재고금액</span><span className="mt-1 block text-xs leading-5 text-slate-500">식자재·소스·음료·포장재를 매입원가 기준으로 합산하세요.</span><div className="mt-2 flex items-center rounded-xl border border-slate-200 bg-slate-50 px-4 focus-within:border-indigo-400"><input type="text" inputMode="numeric" value={formatInputAmount(amount)} placeholder="0" onChange={(event) => setAmount(event.target.value.replace(/\D/g, ""))} className="min-w-0 flex-1 bg-transparent py-4 text-right text-xl font-bold text-slate-950 outline-none" /><span className="ml-2 text-sm text-slate-500">원</span></div></label>
             {error && <p className="mt-4 rounded-xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</p>}
             <button type="button" onClick={saveEnding} className="mt-6 min-h-14 w-full rounded-2xl bg-indigo-600 px-4 text-base font-bold text-white transition hover:bg-indigo-700">월말재고 저장</button>

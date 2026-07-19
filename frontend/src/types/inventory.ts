@@ -21,6 +21,12 @@ export interface MonthlyInventoryStorageData {
   records: Partial<Record<InventoryMonth, MonthlyInventoryRecord>>;
 }
 
+export interface BeginningInventoryResolution {
+  amount: number | null;
+  source: "explicit" | "previous-ending" | "missing";
+  sourceMonth: InventoryMonth | null;
+}
+
 export interface MonthlyMaterialCostResult {
   materialPurchases: number;
   materialCost: number | null;

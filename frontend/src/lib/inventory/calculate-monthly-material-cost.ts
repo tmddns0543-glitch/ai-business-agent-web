@@ -10,6 +10,7 @@ function normalizeAmount(value: number): number {
 export function calculateMonthlyMaterialCost(input: {
   materialPurchases: number;
   inventoryProfitEnabled: boolean;
+  beginningInventory: number | null;
   inventoryRecord?: MonthlyInventoryRecord;
   monthEnded: boolean;
 }): MonthlyMaterialCostResult {
@@ -24,7 +25,7 @@ export function calculateMonthlyMaterialCost(input: {
     };
   }
 
-  const beginningInventory = input.inventoryRecord?.beginningInventory;
+  const beginningInventory = input.beginningInventory;
   const endingInventory = input.inventoryRecord?.endingInventory;
   const inventoryConfirmed =
     input.inventoryRecord?.endingInventoryStatus === "confirmed";

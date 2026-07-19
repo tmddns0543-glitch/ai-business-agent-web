@@ -36,6 +36,26 @@ export function getCurrentInventoryMonth(): InventoryMonth {
   return `${year}-${month}`;
 }
 
+export function getPreviousInventoryMonth(
+  month: InventoryMonth,
+): InventoryMonth | null {
+  if (!isValidInventoryMonth(month)) {
+    return null;
+  }
+
+  const [yearText, monthText] = month.split("-");
+  const year = Number(yearText);
+  const monthNumber = Number(monthText);
+
+  if (monthNumber === 1) {
+    return year === 1
+      ? null
+      : `${String(year - 1).padStart(4, "0")}-12`;
+  }
+
+  return `${yearText}-${String(monthNumber - 1).padStart(2, "0")}`;
+}
+
 export function isCalendarMonthEnd(businessDate: BusinessDate): boolean {
   const [year, month, day] = businessDate.split("-").map(Number);
 

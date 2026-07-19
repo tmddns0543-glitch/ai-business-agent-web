@@ -6,6 +6,11 @@ const MORE_MENU_ITEMS = [
     description: "가게 운영에 필요한 설정을 관리합니다.",
     href: "/more/store",
   },
+  {
+    title: "데이터 관리",
+    description: "입력한 경영 데이터를 파일로 백업하거나 복원합니다.",
+    href: "/more/data",
+  },
 ] as const;
 
 export default function MorePage() {
