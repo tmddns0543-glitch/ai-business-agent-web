@@ -190,13 +190,9 @@ export default function SalesPage() {
           <p className="mt-2 text-sm leading-6 text-slate-500">
             입력할 플랫폼을 선택해주세요.
           </p>
-
-          <p className="mt-1 text-xs leading-5 text-slate-400">
-            /closing에서 선택한 영업일입니다.
-          </p>
         </header>
 
-        <section className="mt-7 rounded-3xl bg-indigo-50 p-5">
+        <section className="mt-6 rounded-3xl bg-indigo-50 p-5">
           <p className="text-sm font-semibold text-indigo-500">
             오늘 매출 정산 예상
           </p>

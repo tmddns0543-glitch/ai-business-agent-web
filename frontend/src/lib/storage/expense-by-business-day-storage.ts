@@ -380,6 +380,56 @@ export function removeExpenseTransaction(
   });
 }
 
+export function removeExpensesByBusinessDate(
+  businessDate: BusinessDate,
+): boolean {
+  if (!isValidBusinessDate(businessDate)) {
+    return false;
+  }
+
+  const current = getBusinessDayExpenseStorage();
+  const nextDays = { ...current.days };
+
+  delete nextDays[businessDate];
+
+  return saveStorage({
+    version: EXPENSE_STORAGE_VERSION,
+    days: nextDays,
+  });
+}
+
+export function replaceExpensesByBusinessDate(
+  businessDate: BusinessDate,
+  transactions: readonly ExpenseTransaction[],
+): boolean {
+  if (!isValidBusinessDate(businessDate)) {
+    return false;
+  }
+
+  const replacements = transactions.map(parseExpenseTransaction);
+
+  if (
+    replacements.some(
+      (transaction) =>
+        transaction === null || transaction.businessDate !== businessDate,
+    )
+  ) {
+    return false;
+  }
+
+  const current = getBusinessDayExpenseStorage();
+
+  return saveStorage({
+    version: EXPENSE_STORAGE_VERSION,
+    days: {
+      ...current.days,
+      [businessDate]: replacements.map(
+        (transaction) => cloneTransaction(transaction as ExpenseTransaction),
+      ),
+    },
+  });
+}
+
 export function replaceExpenseTransactionsByGroup(
   businessDate: BusinessDate,
   group: ExpenseGroup,

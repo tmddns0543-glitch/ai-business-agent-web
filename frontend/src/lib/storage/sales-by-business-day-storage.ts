@@ -147,3 +147,68 @@ export function savePlatformSalesByBusinessDate(
     return false;
   }
 }
+
+export function removeSalesByBusinessDate(
+  businessDate: BusinessDate,
+): boolean {
+  if (!isValidBusinessDate(businessDate)) {
+    return false;
+  }
+
+  const storage = getLocalStorage();
+
+  if (!storage) {
+    return false;
+  }
+
+  const current = getBusinessDaySalesStorage();
+  const nextDays = { ...current.days };
+
+  delete nextDays[businessDate];
+
+  try {
+    storage.setItem(
+      BUSINESS_DAY_SALES_STORAGE_KEY,
+      JSON.stringify({
+        version: BUSINESS_DAY_SALES_STORAGE_VERSION,
+        days: nextDays,
+      } satisfies BusinessDaySalesStorageData),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function replaceSalesByBusinessDate(
+  businessDate: BusinessDate,
+  sales: StoredSalesByPlatform,
+): boolean {
+  if (!isValidBusinessDate(businessDate)) {
+    return false;
+  }
+
+  const storage = getLocalStorage();
+
+  if (!storage) {
+    return false;
+  }
+
+  const current = getBusinessDaySalesStorage();
+
+  try {
+    storage.setItem(
+      BUSINESS_DAY_SALES_STORAGE_KEY,
+      JSON.stringify({
+        version: BUSINESS_DAY_SALES_STORAGE_VERSION,
+        days: {
+          ...current.days,
+          [businessDate]: copySalesByPlatform(sales),
+        },
+      } satisfies BusinessDaySalesStorageData),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}

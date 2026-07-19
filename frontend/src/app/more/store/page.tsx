@@ -11,6 +11,12 @@ const STORE_SETTING_ITEMS = [
     description: "대행사별 초기 캐시와 충전수수료 방식을 관리합니다.",
     href: "/more/store/delivery-agencies",
   },
+  {
+    title: "기초재고 설정",
+    description:
+      "월별 기초재고와 월말재고를 반영해 실제 사용한 재료비를 계산합니다.",
+    href: "/more/store/inventory",
+  },
 ] as const;
 
 export default function StoreSettingsPage() {

@@ -531,6 +531,24 @@ export function removeDeliveryTransaction(
   });
 }
 
+export function removeDeliveryTransactionsByBusinessDate(
+  businessDate: BusinessDate,
+): boolean {
+  if (!isValidBusinessDate(businessDate)) {
+    return false;
+  }
+
+  const current = getDeliveryTransactionStorage();
+  const nextDays = { ...current.days };
+
+  delete nextDays[businessDate];
+
+  return saveTransactionStorage({
+    version: STORAGE_VERSION,
+    days: nextDays,
+  });
+}
+
 export function replaceDeliveryTransactionsByBusinessDate(
   businessDate: BusinessDate,
   transactions: readonly DeliveryAgencyTransaction[],
