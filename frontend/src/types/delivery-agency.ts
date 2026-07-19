@@ -13,6 +13,10 @@ export type DeliveryAgencyPaymentSource =
   | "card"
   | "other";
 
+export type DeliveryAgencyChargeFeeMode =
+  | "deduct-from-payment"
+  | "additional-payment";
+
 export interface DeliveryAgencyTransaction {
   id: string;
   businessDate: BusinessDate;
@@ -31,6 +35,7 @@ export interface DeliveryAgency {
   name: string;
   enabled: boolean;
   initialCashBalance: number;
+  chargeFeeMode: DeliveryAgencyChargeFeeMode;
   createdAt: string;
   updatedAt: string;
 }

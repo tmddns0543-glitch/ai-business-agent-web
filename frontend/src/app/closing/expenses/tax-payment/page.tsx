@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { CustomExpenseItemManager } from "@/components/expenses/custom-expense-item-manager";
@@ -131,6 +132,7 @@ function getManagedSignature(
 }
 
 export default function TaxPaymentPage() {
+  const router = useRouter();
   const [businessDate, setBusinessDate] = useState<BusinessDate | null>(null);
   const [transactions, setTransactions] = useState<ExpenseTransaction[]>([]);
   const [items, setItems] = useState<ExpenseCatalogItem[]>([]);
@@ -179,22 +181,6 @@ export default function TaxPaymentPage() {
   const hasAdjustments = transactions.some(
     ({ transactionType }) => transactionType !== "expense",
   );
-
-  function reload(date: BusinessDate) {
-    const savedTransactions = getExpensesByBusinessDateAndGroup(
-      date,
-      "tax-payment",
-    );
-    const editableItems = createEditableItems(savedTransactions);
-    const existingItems = createExistingItems(
-      savedTransactions,
-      new Set(editableItems.map(({ id }) => id)),
-    );
-
-    setTransactions(savedTransactions);
-    setItems(editableItems);
-    setValues(createInputValues(editableItems, existingItems));
-  }
 
   function refreshCatalog() {
     const editableItems = createEditableItems(transactions);
@@ -297,8 +283,7 @@ export default function TaxPaymentPage() {
     );
 
     if (currentSignature === nextSignature) {
-      setMessage("변경된 내용이 없습니다.");
-      setError(null);
+      router.push("/closing/expenses");
       return;
     }
 
@@ -313,9 +298,11 @@ export default function TaxPaymentPage() {
         nextTransactions,
       )
     ) {
-      setExpenseUnconfirmed(businessDate);
-      reload(businessDate);
-      setMessage("세금 납부 내역을 저장했습니다.");
+      if (setExpenseUnconfirmed(businessDate)) {
+        router.push("/closing/expenses");
+      } else {
+        setError("비용 확인 상태를 변경하지 못했습니다. 다시 시도해주세요.");
+      }
     } else {
       setError(
         "세금 납부 내역을 저장하지 못했습니다. 다시 시도해주세요.",

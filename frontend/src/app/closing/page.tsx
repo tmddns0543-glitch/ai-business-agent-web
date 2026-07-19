@@ -1,8 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
 
+import {
+  calculateDeliveryAgencySummariesByAgency,
+  calculateTotalDeliveryAgencySummary,
+} from "@/lib/delivery-agency/calculate-delivery-agency-summary";
+import { calculateDeliveryAgencyBalanceThroughDate } from "@/lib/delivery-agency/calculate-delivery-agency-balance";
 import type { SalesSettlementSummary } from "@/lib/settlement/calculate-sales-settlement";
 import {
   calculateExpectedSettlementRate,
@@ -19,13 +24,21 @@ import {
 import {
   completeBusinessDayClosing,
   getClosingStatusByBusinessDate,
+  setExpenseConfirmedNone,
+  setSectionConfirmed,
 } from "@/lib/storage/closing-status-by-business-day-storage";
+import {
+  getAllDeliveryTransactions,
+  getDeliveryAgencies,
+  getDeliveryTransactionsByBusinessDate,
+} from "@/lib/storage/delivery-agency-storage";
 import {
   isValidBusinessDate,
   type BusinessDate,
 } from "@/types/business-day";
 import type { BusinessDayClosingStatus } from "@/types/closing-status-by-business-day";
 import type { ExpenseSummary } from "@/types/expense-storage";
+import type { DeliveryAgencySummary } from "@/types/delivery-agency";
 import type { SettlementResult } from "@/types/settlement";
 
 function formatMoney(value: number) {
@@ -40,6 +53,36 @@ function formatClosingButtonDate(date: BusinessDate) {
   return `${month}월 ${day}일`;
 }
 
+function getDeliverySummaryByBusinessDate(
+  businessDate: BusinessDate,
+): DeliveryAgencySummary {
+  const activeAgencies = getDeliveryAgencies().filter(({ enabled }) => enabled);
+  const currentTransactions = getDeliveryTransactionsByBusinessDate(businessDate);
+  const allTransactions = getAllDeliveryTransactions();
+  const summary = calculateTotalDeliveryAgencySummary(
+    calculateDeliveryAgencySummariesByAgency(
+      currentTransactions,
+      activeAgencies,
+    ).map(({ summary: agencySummary }) => agencySummary),
+  );
+  const closingCashBalance = activeAgencies.reduce(
+    (total, agency) =>
+      total +
+      calculateDeliveryAgencyBalanceThroughDate(
+        allTransactions,
+        agency.id,
+        businessDate,
+        agency.initialCashBalance,
+      ),
+    0,
+  );
+
+  return {
+    ...summary,
+    closingCashBalance,
+  };
+}
+
 type ClosingItemProps = {
   title: string;
   description: string;
@@ -52,6 +95,14 @@ type ClosingItemProps = {
   completedLabel?: string;
   href: string;
   actionLabel: string;
+  details?: ReadonlyArray<{
+    label: string;
+    value: string;
+  }>;
+  quickAction?: {
+    label: string;
+    onClick: (event: MouseEvent<HTMLButtonElement>) => void;
+  };
 };
 
 function ClosingItem({
@@ -66,18 +117,23 @@ function ClosingItem({
   completedLabel = "완료",
   href,
   actionLabel,
+  details,
+  quickAction,
 }: ClosingItemProps) {
   return (
-    <Link
-      href={href}
-      prefetch={false}
-      className={`block rounded-xl border px-4 py-3.5 transition active:scale-[0.99] ${
+    <article
+      className={`rounded-xl border transition ${
         completed
           ? "border-emerald-200 bg-emerald-50/40"
           : "border-slate-200 bg-white hover:border-indigo-200"
       }`}
     >
-      <div className="flex items-start gap-3">
+      <Link
+        href={href}
+        prefetch={false}
+        className="block px-4 py-3.5 active:scale-[0.99]"
+      >
+        <div className="flex items-start gap-3">
         <div
           className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-bold ${
             completed
@@ -147,6 +203,20 @@ function ClosingItem({
                 </div>
               </div>
             </div>
+          ) : details ? (
+            <div className="mt-2 space-y-1 border-t border-slate-100 pt-2 text-xs">
+              {details.map((detail) => (
+                <div
+                  key={detail.label}
+                  className="flex items-center justify-between gap-3"
+                >
+                  <span className="text-slate-500">{detail.label}</span>
+                  <span className="shrink-0 font-semibold text-slate-700">
+                    {detail.value}
+                  </span>
+                </div>
+              ))}
+            </div>
           ) : amount ? (
             <div className="mt-2 space-y-1 border-t border-slate-100 pt-2 text-xs">
               <div className="flex items-center justify-between gap-3">
@@ -172,11 +242,25 @@ function ClosingItem({
               )}
             </div>
           ) : null}
-        </div>
 
-        <span className="mt-1.5 shrink-0 text-xl text-slate-300">›</span>
-      </div>
-    </Link>
+          </div>
+
+          <span className="mt-1.5 shrink-0 text-xl text-slate-300">›</span>
+        </div>
+      </Link>
+
+      {quickAction && (
+        <div className="px-4 pb-3.5 pl-16">
+          <button
+            type="button"
+            onClick={quickAction.onClick}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-indigo-200 hover:text-indigo-600"
+          >
+            {quickAction.label}
+          </button>
+        </div>
+      )}
+    </article>
   );
 }
 
@@ -187,12 +271,15 @@ export default function ClosingPage() {
   const [expenseSummary, setExpenseSummary] = useState<ExpenseSummary | null>(
     null,
   );
-  const [deliveryBalance, setDeliveryBalance] = useState(0);
+  const [deliverySummary, setDeliverySummary] =
+    useState<DeliveryAgencySummary | null>(null);
+  const [deliveryTransactionCount, setDeliveryTransactionCount] = useState(0);
   const [selectedBusinessDate, setSelectedBusinessDateState] =
     useState<BusinessDate | null>(null);
   const [businessDateError, setBusinessDateError] = useState<string | null>(
     null,
   );
+  const [quickActionError, setQuickActionError] = useState<string | null>(null);
   const [isCompletingClosing, setIsCompletingClosing] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
 
@@ -203,19 +290,25 @@ export default function ClosingPage() {
     setSelectedBusinessDateState(savedBusinessDate);
     setSalesSummary(getSalesSettlementByBusinessDate(savedBusinessDate));
     setExpenseSummary(getExpenseSummaryByBusinessDate(savedBusinessDate));
-    setStatus(getClosingStatusByBusinessDate(savedBusinessDate));
-
-    const savedDeliveryBalance = Number(
-      window.localStorage.getItem("closing-delivery-balance") ?? 0,
+    setDeliverySummary(getDeliverySummaryByBusinessDate(savedBusinessDate));
+    setDeliveryTransactionCount(
+      getDeliveryTransactionsByBusinessDate(savedBusinessDate).length,
     );
-
-    setDeliveryBalance(savedDeliveryBalance);
+    setStatus(getClosingStatusByBusinessDate(savedBusinessDate));
 
     setIsLoaded(true);
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const salesTotal = salesSummary?.total.grossSales ?? 0;
+  const platformExpectedDeduction =
+    salesSummary?.total.expectedDeduction ?? 0;
+  const expectedTotalOperatingCost =
+    platformExpectedDeduction +
+    (expenseSummary?.operatingExpenseTotal ?? 0) +
+    (expenseSummary?.taxPaymentTotal ?? 0) +
+    (deliverySummary?.operatingExpenseTotal ?? 0);
+  const simpleProfit = salesTotal - expectedTotalOperatingCost;
   const salesCompleted =
     status?.salesStatus === "confirmed" && salesTotal > 0;
   const expenseTransactionCount = expenseSummary?.transactionCount ?? 0;
@@ -250,6 +343,61 @@ export default function ClosingPage() {
     setIsCompletingClosing(false);
   }
 
+  function confirmNoExpensesQuick(event: MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (!selectedBusinessDate) {
+      return;
+    }
+
+    const latestSummary = getExpenseSummaryByBusinessDate(selectedBusinessDate);
+
+    if (latestSummary.transactionCount > 0) {
+      setExpenseSummary(latestSummary);
+      setQuickActionError("이미 입력된 비용이 있습니다.");
+      return;
+    }
+
+    if (!setExpenseConfirmedNone(selectedBusinessDate)) {
+      setQuickActionError("비용 없음 상태를 저장하지 못했습니다.");
+      return;
+    }
+
+    setQuickActionError(null);
+    setExpenseSummary(latestSummary);
+    setStatus(getClosingStatusByBusinessDate(selectedBusinessDate));
+  }
+
+  function confirmNoDeliveryQuick(event: MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (!selectedBusinessDate) {
+      return;
+    }
+
+    const latestTransactions =
+      getDeliveryTransactionsByBusinessDate(selectedBusinessDate);
+
+    if (latestTransactions.length > 0) {
+      setDeliveryTransactionCount(latestTransactions.length);
+      setDeliverySummary(getDeliverySummaryByBusinessDate(selectedBusinessDate));
+      setQuickActionError("이미 입력된 배달대행사 내역이 있습니다.");
+      return;
+    }
+
+    if (!setSectionConfirmed(selectedBusinessDate, "delivery")) {
+      setQuickActionError("배달대행사 없음 상태를 저장하지 못했습니다.");
+      return;
+    }
+
+    setQuickActionError(null);
+    setDeliveryTransactionCount(0);
+    setDeliverySummary(getDeliverySummaryByBusinessDate(selectedBusinessDate));
+    setStatus(getClosingStatusByBusinessDate(selectedBusinessDate));
+  }
+
   function changeBusinessDate(date: string) {
     if (!isValidBusinessDate(date)) {
       setBusinessDateError(
@@ -269,13 +417,19 @@ export default function ClosingPage() {
     setSelectedBusinessDateState(date);
     setSalesSummary(getSalesSettlementByBusinessDate(date));
     setExpenseSummary(getExpenseSummaryByBusinessDate(date));
+    setDeliverySummary(getDeliverySummaryByBusinessDate(date));
+    setDeliveryTransactionCount(
+      getDeliveryTransactionsByBusinessDate(date).length,
+    );
     setStatus(getClosingStatusByBusinessDate(date));
+    setQuickActionError(null);
   }
 
   if (
     !isLoaded ||
     !salesSummary ||
     !expenseSummary ||
+    !deliverySummary ||
     !selectedBusinessDate ||
     !status
   ) {
@@ -293,6 +447,11 @@ export default function ClosingPage() {
     status.expenseStatus === "confirmed-none" && !expenseHasData
       ? "없음 확인"
       : "완료";
+  const deliveryNoneConfirmed =
+    deliveryCompleted && deliveryTransactionCount === 0;
+  const deliveryCompletedLabel = deliveryNoneConfirmed
+    ? "없음 확인"
+    : "확인 완료";
 
   return (
     <main className="min-h-screen bg-slate-100 px-3 py-3">
@@ -329,53 +488,37 @@ export default function ClosingPage() {
             )}
           </section>
 
-          <div className="mt-4 flex items-start justify-between gap-3">
-            <div>
-              <h1 className="text-3xl font-bold tracking-tight text-slate-950">
-                마감
-              </h1>
+          <div className="mt-4">
+            <h1 className="text-3xl font-bold tracking-tight text-slate-950">
+              마감
+            </h1>
 
-              <p className="mt-1 text-xs leading-5 text-slate-500">
-                원하는 항목부터 확인해도 괜찮아요.
-              </p>
-            </div>
-
-            <div className="relative flex h-14 w-14 shrink-0 items-center justify-center">
-              <div
-                className="absolute inset-0 rounded-full"
-                style={{
-                  background: `conic-gradient(
-                    #4f46e5 ${progress}%,
-                    #e2e8f0 ${progress}% 100%
-                  )`,
-                }}
-              />
-
-              <div className="relative flex h-11 w-11 items-center justify-center rounded-full bg-white">
-                <span className="text-xs font-bold text-indigo-600">
-                  {progress}%
-                </span>
-              </div>
-            </div>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              원하는 항목부터 확인해도 괜찮아요.
+            </p>
           </div>
         </header>
 
-        {closingCompleted ? (
+        {closingCompleted || allCompleted ? (
           <section className="mt-5 rounded-xl bg-emerald-500 p-4 text-white">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/20 text-lg">
               ✓
             </div>
 
             <p className="mt-3 text-xs font-medium text-emerald-100">
-              선택한 영업일의 마감을 완료했어요.
+              {closingCompleted
+                ? "선택한 영업일의 마감을 완료했어요."
+                : "매출·비용·배달대행사를 모두 확인했어요."}
             </p>
 
             <h2 className="mt-1 text-2xl font-bold">
-              마감 완료
+              {closingCompleted ? "마감 완료" : "확인 완료"}
             </h2>
 
             <p className="mt-1.5 text-xs leading-5 text-emerald-50">
-              필요하면 입력 내용을 다시 확인하거나 수정할 수 있어요.
+              {closingCompleted
+                ? "필요하면 입력 내용을 다시 확인하거나 수정할 수 있어요."
+                : "아래 최종 마감 버튼으로 오늘 마감을 완료해주세요."}
             </p>
           </section>
         ) : (
@@ -436,21 +579,66 @@ export default function ClosingPage() {
             completedLabel={expenseCompletedLabel}
             href="/closing/expenses"
             actionLabel="확인 필요"
+            quickAction={
+              !expenseHasData && status.expenseStatus === "unconfirmed"
+                ? {
+                    label: "오늘 비용 없음",
+                    onClick: confirmNoExpensesQuick,
+                  }
+                : undefined
+            }
           />
 
           <ClosingItem
             title="배달대행사"
-            description="오늘 사용액과 캐시입금 내역을 확인합니다."
-            amount={
-              deliveryBalance !== 0
-                ? `예수금 ${formatMoney(deliveryBalance)}`
+            description={
+              deliverySummary.transactionCount > 0
+                ? `${deliverySummary.transactionCount}건의 거래를 확인합니다.`
+                : "오늘 배달대행사 사용 여부를 확인해주세요."
+            }
+            details={[
+              {
+                label: "실제 운영비용",
+                value: formatMoney(deliverySummary.operatingExpenseTotal),
+              },
+              {
+                label: "외부 현금 유출",
+                value: formatMoney(
+                  deliverySummary.externalCashOutflowTotal,
+                ),
+              },
+              {
+                label: "예상 매입세액",
+                value: formatMoney(
+                  deliverySummary.estimatedInputVatTotal,
+                ),
+              },
+              {
+                label: "예상 캐시 잔액",
+                value: formatMoney(deliverySummary.closingCashBalance),
+              },
+            ]}
+            completed={deliveryCompleted}
+            completedLabel={deliveryCompletedLabel}
+            href="/closing/delivery"
+            actionLabel="미확인"
+            quickAction={
+              deliveryTransactionCount === 0 &&
+              status.deliveryStatus === "unconfirmed"
+                ? {
+                    label: "오늘 사용 안함",
+                    onClick: confirmNoDeliveryQuick,
+                  }
                 : undefined
             }
-            completed={deliveryCompleted}
-            href="/closing/delivery"
-            actionLabel="확인 필요"
           />
         </section>
+
+        {quickActionError && (
+          <p className="mt-3 rounded-xl bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700">
+            {quickActionError}
+          </p>
+        )}
 
         <section className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
           <div className="flex items-center justify-between">
@@ -465,11 +653,11 @@ export default function ClosingPage() {
 
           <div className="mt-2 flex items-center justify-between">
             <span className="text-xs font-medium text-slate-500">
-              총 현금 지출
+              예상 총 운영비용
             </span>
 
             <span className="text-base font-bold text-slate-950">
-              {formatMoney(expenseSummary.totalCashOutflow)}
+              {formatMoney(expectedTotalOperatingCost)}
             </span>
           </div>
 
@@ -477,19 +665,17 @@ export default function ClosingPage() {
 
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-slate-700">
-              현재 단순 잔액
+              현재 단순 손익
             </span>
 
             <span className="text-xl font-bold text-indigo-600">
-              {formatMoney(
-                salesTotal - expenseSummary.totalCashOutflow,
-              )}
+              {formatMoney(simpleProfit)}
             </span>
           </div>
 
           <p className="mt-2 text-[11px] leading-4 text-slate-400">
-            현재는 입력된 매출과 비용만 반영합니다. 플랫폼 수수료 계산은
-            다음 단계에서 추가됩니다.
+            현재는 오늘의 손익을 기준으로 계산됩니다. 플랫폼 예상 공제액과
+            입력된 비용이 포함됩니다.
           </p>
         </section>
 

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   useEffect,
   useMemo,
@@ -72,6 +73,7 @@ function getTransactionTypeLabel(
 }
 
 export default function MaterialPurchasePage() {
+  const router = useRouter();
   const vendorAutocompleteRef = useRef<HTMLDivElement>(null);
   const [businessDate, setBusinessDate] = useState<BusinessDate | null>(null);
   const [transactions, setTransactions] = useState<ExpenseTransaction[]>([]);
@@ -181,8 +183,8 @@ export default function MaterialPurchasePage() {
     setError(null);
   }
 
-  function markExpenseChanged(date: BusinessDate) {
-    setExpenseUnconfirmed(date);
+  function markExpenseChanged(date: BusinessDate): boolean {
+    return setExpenseUnconfirmed(date);
   }
 
   function saveTransaction() {
@@ -230,8 +232,7 @@ export default function MaterialPurchasePage() {
         existingTransaction.taxTreatment === "taxable" &&
         existingTransaction.inventoryApplied === false
       ) {
-        setMessage("변경된 내용이 없습니다.");
-        setIsSaving(false);
+        router.push("/closing/expenses");
         return;
       }
 
@@ -245,7 +246,11 @@ export default function MaterialPurchasePage() {
       });
 
       if (saved) {
-        markExpenseChanged(businessDate);
+        if (!markExpenseChanged(businessDate)) {
+          setError("비용 확인 상태를 변경하지 못했습니다. 다시 시도해주세요.");
+          setIsSaving(false);
+          return;
+        }
         if (
           existingTransaction &&
           normalizeMaterialVendorName(
@@ -257,7 +262,7 @@ export default function MaterialPurchasePage() {
         }
         refreshTransactions(businessDate);
         resetForm();
-        setMessage("원재료 매입을 수정했습니다.");
+        router.push("/closing/expenses");
       } else {
         setError("원재료 매입을 저장하지 못했습니다. 다시 시도해주세요.");
       }
@@ -285,12 +290,16 @@ export default function MaterialPurchasePage() {
     };
 
     if (addExpenseTransaction(transaction)) {
-      markExpenseChanged(businessDate);
+      if (!markExpenseChanged(businessDate)) {
+        setError("비용 확인 상태를 변경하지 못했습니다. 다시 시도해주세요.");
+        setIsSaving(false);
+        return;
+      }
       upsertMaterialVendorFromExpense(savedVendorName);
       refreshVendorSuggestions();
       refreshTransactions(businessDate);
       resetForm();
-      setMessage("원재료 매입을 저장했습니다.");
+      router.push("/closing/expenses");
     } else {
       setError("원재료 매입을 저장하지 못했습니다. 다시 시도해주세요.");
     }
@@ -328,8 +337,12 @@ export default function MaterialPurchasePage() {
     }
 
     if (removeExpenseTransaction(businessDate, transaction.id)) {
-      markExpenseChanged(businessDate);
       refreshTransactions(businessDate);
+
+      if (!markExpenseChanged(businessDate)) {
+        setError("비용 확인 상태를 변경하지 못했습니다. 다시 시도해주세요.");
+        return;
+      }
 
       if (editingId === transaction.id) {
         resetForm();
@@ -670,6 +683,7 @@ export default function MaterialPurchasePage() {
             </div>
           )}
         </section>
+
       </div>
     </main>
   );

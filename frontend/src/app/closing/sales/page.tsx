@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import type { SalesSettlementSummary } from "@/lib/settlement/calculate-sales-settlement";
@@ -127,6 +128,7 @@ function PlatformCard({
 }
 
 export default function SalesPage() {
+  const router = useRouter();
   const [summary, setSummary] =
     useState<SalesSettlementSummary | null>(null);
   const [businessDate, setBusinessDate] = useState<BusinessDate | null>(null);
@@ -291,7 +293,7 @@ export default function SalesPage() {
           type="button"
           onClick={() => {
             if (setSectionConfirmed(businessDate, "sales")) {
-              window.location.href = "/closing";
+              router.push("/closing");
             } else {
               window.alert("매출 확인 상태를 저장하지 못했습니다.");
             }

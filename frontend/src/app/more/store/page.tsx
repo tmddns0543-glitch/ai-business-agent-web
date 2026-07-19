@@ -6,6 +6,11 @@ const STORE_SETTING_ITEMS = [
     description: "플랫폼별 계약 수수료와 정산 기준을 관리합니다.",
     href: "/more/store/sales-channels",
   },
+  {
+    title: "배달대행사 설정",
+    description: "대행사별 초기 캐시와 충전수수료 방식을 관리합니다.",
+    href: "/more/store/delivery-agencies",
+  },
 ] as const;
 
 export default function StoreSettingsPage() {

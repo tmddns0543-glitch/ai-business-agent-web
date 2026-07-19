@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 
 import MoneyField from "@/components/sales/money-field";
 import { getSelectedBusinessDate } from "@/lib/storage/business-day-storage";
-import { reopenBusinessDayClosing } from "@/lib/storage/closing-status-by-business-day-storage";
+import { setSectionUnconfirmed } from "@/lib/storage/closing-status-by-business-day-storage";
 import {
   getPlatformSalesByBusinessDate,
   savePlatformSalesByBusinessDate,
@@ -92,8 +92,26 @@ export default function SalesPlatformForm({ config }: SalesPlatformFormProps) {
 
     setIsSaving(true);
 
+    if (!businessDate) {
+      setIsSaving(false);
+      window.alert("매출을 저장하지 못했습니다. 다시 시도해주세요.");
+      return;
+    }
+
+    const savedValues = createFormValues(
+      config,
+      getPlatformSalesByBusinessDate(businessDate, config.platformKey),
+    );
+    const hasChanges = config.fields.some(
+      ({ key }) => savedValues[key] !== (values[key] ?? 0),
+    );
+
+    if (!hasChanges) {
+      router.push("/closing/sales");
+      return;
+    }
+
     if (
-      !businessDate ||
       !savePlatformSalesByBusinessDate(
         businessDate,
         config.platformKey,
@@ -105,11 +123,13 @@ export default function SalesPlatformForm({ config }: SalesPlatformFormProps) {
       return;
     }
 
-    reopenBusinessDayClosing(businessDate);
+    if (!setSectionUnconfirmed(businessDate, "sales")) {
+      setIsSaving(false);
+      window.alert("매출 확인 상태를 변경하지 못했습니다. 다시 시도해주세요.");
+      return;
+    }
 
-    window.setTimeout(() => {
-      router.push("/closing/sales");
-    }, 300);
+    router.push("/closing/sales");
   }
 
   function resetValues() {
