@@ -1,8 +1,16 @@
 import { DEFAULT_SETTLEMENT_SETTINGS } from "@/data/settlement-default-settings";
 import type {
+  BusinessFeeSettings,
+  PlatformFeeSettings,
   SettlementChannelId,
   SettlementChannelSetting,
+  SettlementPlatformId,
 } from "@/types/settlement";
+import { getPlatformFeeSettings } from "@/lib/storage/fee-settings-storage";
+
+type ChannelSettingUpdate = Partial<
+  Omit<SettlementChannelSetting, "channelId" | "platformId">
+>;
 
 export function parseSettingNumber(value: string) {
   return value.trim() === "" ? 0 : Number(value);
@@ -35,4 +43,19 @@ export function getDefaultChannelUpdate(channelId: SettlementChannelId) {
   void platformId;
 
   return update;
+}
+
+export function createPlatformFeeSettings(
+  current: BusinessFeeSettings,
+  platformId: SettlementPlatformId,
+  updates: Readonly<Partial<Record<SettlementChannelId, ChannelSettingUpdate>>>,
+): PlatformFeeSettings {
+  const channels = { ...current.channels };
+  for (const [rawChannelId, update] of Object.entries(updates)) {
+    const channelId = rawChannelId as SettlementChannelId;
+    const channel = channels[channelId];
+    if (channel.platformId !== platformId || !update) continue;
+    channels[channelId] = { ...channel, ...update, channelId, platformId };
+  }
+  return getPlatformFeeSettings({ ...current, channels }, platformId);
 }

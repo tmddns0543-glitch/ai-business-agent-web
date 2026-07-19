@@ -4,20 +4,21 @@ import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 
 import {
+  createPlatformFeeSettings,
+  getDefaultChannelUpdate,
+} from "@/components/settings/fee-setting-utils";
+import { useFeeSettingSaveFlow } from "@/components/settings/fee-setting-save-flow";
+import {
   FeeRateField,
   PerOrderFeeField,
   SettingChannelCard,
 } from "@/components/settings/fee-setting-fields";
-import { DEFAULT_SETTLEMENT_SETTINGS } from "@/data/settlement-default-settings";
 import {
   getBusinessFeeSettings,
-  updateChannelSetting,
 } from "@/lib/storage/fee-settings-storage";
 import {
   SETTLEMENT_CHANNEL_IDS,
   type BusinessFeeSettings,
-  type SettlementChannelId,
-  type SettlementChannelSetting,
 } from "@/types/settlement";
 
 const BAEMIN_CHANNEL_IDS = {
@@ -115,32 +116,19 @@ function validateForm(values: FormValues) {
   return { errors, normalized };
 }
 
-function settingsMatchForm(
-  settings: BusinessFeeSettings,
-  values: Record<FormField, number>,
-) {
-  const current = createFormValues(settings);
-
-  return (Object.keys(current) as FormField[]).every(
-    (field) => Number(current[field]) === values[field],
-  );
-}
-
-function getDefaultChannelUpdate(channelId: SettlementChannelId) {
-  const setting: SettlementChannelSetting =
-    DEFAULT_SETTLEMENT_SETTINGS.channels[channelId];
-  const { channelId: savedChannelId, platformId, ...update } = setting;
-
-  void savedChannelId;
-  void platformId;
-
-  return update;
-}
-
 export default function BaeminFeeSettingsPage() {
   const [values, setValues] = useState<FormValues | null>(null);
   const [errors, setErrors] = useState<FormErrors>({});
   const [message, setMessage] = useState<FormMessage | null>(null);
+  const saveFlow = useFeeSettingSaveFlow({
+    platformId: "baemin",
+    onMessage: (text) => setMessage({ type: text.includes("못했습니다") ? "error" : "success", text }),
+    onSaved: () => {
+      setValues(createFormValues(getBusinessFeeSettings()));
+      setErrors({});
+      setMessage({ type: "success", text: "배달의민족 설정을 저장했습니다." });
+    },
+  });
 
   /* eslint-disable react-hooks/set-state-in-effect -- LocalStorage settings hydrate after the client mounts. */
   useEffect(() => {
@@ -174,39 +162,12 @@ export default function BaeminFeeSettingsPage() {
       return;
     }
 
-    updateChannelSetting(BAEMIN_CHANNEL_IDS.prepaid, {
-      brokerageRate: normalized.prepaidBrokerageRate,
-      paymentRate: normalized.prepaidPaymentRate,
-    });
-    updateChannelSetting(BAEMIN_CHANNEL_IDS.card, {
-      brokerageRate: normalized.cardBrokerageRate,
-      cardRate: normalized.cardRate,
-    });
-    updateChannelSetting(BAEMIN_CHANNEL_IDS.cash, {
-      brokerageRate: normalized.cashBrokerageRate,
-    });
-    updateChannelSetting(BAEMIN_CHANNEL_IDS.baeminOne, {
-      brokerageRate: normalized.baeminOneBrokerageRate,
-      paymentRate: normalized.baeminOnePaymentRate,
-      deliveryFeePerOrder: normalized.baeminOneDeliveryFeePerOrder,
-    });
-
-    const savedSettings = getBusinessFeeSettings();
-
-    if (!settingsMatchForm(savedSettings, normalized)) {
-      setMessage({
-        type: "error",
-        text: "설정을 저장하지 못했습니다. 다시 시도해주세요.",
-      });
-      return;
-    }
-
-    setValues(createFormValues(savedSettings));
-    setErrors({});
-    setMessage({
-      type: "success",
-      text: "배달의민족 설정을 저장했습니다.",
-    });
+    saveFlow.requestSave(createPlatformFeeSettings(getBusinessFeeSettings(), "baemin", {
+      [BAEMIN_CHANNEL_IDS.prepaid]: { brokerageRate: normalized.prepaidBrokerageRate, paymentRate: normalized.prepaidPaymentRate },
+      [BAEMIN_CHANNEL_IDS.card]: { brokerageRate: normalized.cardBrokerageRate, cardRate: normalized.cardRate },
+      [BAEMIN_CHANNEL_IDS.cash]: { brokerageRate: normalized.cashBrokerageRate },
+      [BAEMIN_CHANNEL_IDS.baeminOne]: { brokerageRate: normalized.baeminOneBrokerageRate, paymentRate: normalized.baeminOnePaymentRate, deliveryFeePerOrder: normalized.baeminOneDeliveryFeePerOrder },
+    }));
   }
 
   function restoreDefaults() {
@@ -214,17 +175,7 @@ export default function BaeminFeeSettingsPage() {
       return;
     }
 
-    for (const channelId of Object.values(BAEMIN_CHANNEL_IDS)) {
-      updateChannelSetting(channelId, getDefaultChannelUpdate(channelId));
-    }
-
-    const restoredSettings = getBusinessFeeSettings();
-    setValues(createFormValues(restoredSettings));
-    setErrors({});
-    setMessage({
-      type: "success",
-      text: "배달의민족 설정을 기본값으로 되돌렸습니다.",
-    });
+    saveFlow.requestSave(createPlatformFeeSettings(getBusinessFeeSettings(), "baemin", Object.fromEntries(Object.values(BAEMIN_CHANNEL_IDS).map((channelId) => [channelId, getDefaultChannelUpdate(channelId)]))));
   }
 
   if (!values) {
@@ -349,6 +300,8 @@ export default function BaeminFeeSettingsPage() {
             실제 계약 내용을 확인하고 수정해주세요.
           </p>
 
+          {saveFlow.status}
+
           {message && (
             <p
               role="status"
@@ -386,6 +339,7 @@ export default function BaeminFeeSettingsPage() {
             </Link>
           </div>
         </form>
+        {saveFlow.dialogs}
       </div>
     </main>
   );

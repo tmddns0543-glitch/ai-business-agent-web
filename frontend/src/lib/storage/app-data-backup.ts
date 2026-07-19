@@ -85,7 +85,12 @@ function hasExpectedStorageShape(
   }
 
   if (key === BUSINESS_FEE_SETTINGS_STORAGE_KEY) {
-    return hasVersionOne(value) && isRecord(value.channels);
+    return (
+      (hasVersionOne(value) && isRecord(value.channels)) ||
+      (value.version === 2 &&
+        isRecord(value.legacySettings) &&
+        isRecord(value.history))
+    );
   }
 
   if (key === DELIVERY_AGENCIES_STORAGE_KEY) {

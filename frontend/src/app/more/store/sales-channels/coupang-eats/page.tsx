@@ -8,11 +8,13 @@ import {
   SettingChannelCard,
 } from "@/components/settings/fee-setting-fields";
 import {
+  createPlatformFeeSettings,
   getDefaultChannelUpdate,
   parseSettingNumber,
   validateFeeRate,
   validatePerOrderFee,
 } from "@/components/settings/fee-setting-utils";
+import { useFeeSettingSaveFlow } from "@/components/settings/fee-setting-save-flow";
 import {
   SettingsFormActions,
   SettingsLoading,
@@ -20,7 +22,6 @@ import {
 } from "@/components/settings/settings-page-parts";
 import {
   getBusinessFeeSettings,
-  updateChannelSetting,
 } from "@/lib/storage/fee-settings-storage";
 import { SETTLEMENT_CHANNEL_IDS } from "@/types/settlement";
 
@@ -46,6 +47,15 @@ export default function CoupangEatsSettingsPage() {
   const [values, setValues] = useState<Values | null>(null);
   const [errors, setErrors] = useState<Errors>({});
   const [message, setMessage] = useState("");
+  const saveFlow = useFeeSettingSaveFlow({
+    platformId: "coupang-eats",
+    onMessage: setMessage,
+    onSaved: () => {
+      setValues(readValues());
+      setErrors({});
+      setMessage("쿠팡이츠 설정을 저장했습니다.");
+    },
+  });
 
   /* eslint-disable react-hooks/set-state-in-effect -- LocalStorage settings hydrate after mount. */
   useEffect(() => setValues(readValues()), []);
@@ -82,26 +92,20 @@ export default function CoupangEatsSettingsPage() {
       return;
     }
 
-    updateChannelSetting(CHANNEL_ID, normalized);
-    const saved = readValues();
-    const didSave = (Object.keys(saved) as (keyof Values)[]).every(
-      (field) => Number(saved[field]) === normalized[field],
-    );
-    if (!didSave) {
-      setMessage("설정을 저장하지 못했습니다. 다시 시도해주세요.");
-      return;
-    }
-    setValues(saved);
-    setErrors({});
-    setMessage("쿠팡이츠 설정을 저장했습니다.");
+    saveFlow.requestSave(createPlatformFeeSettings(
+      getBusinessFeeSettings(),
+      "coupang-eats",
+      { [CHANNEL_ID]: normalized },
+    ));
   }
 
   function restore() {
     if (!window.confirm("쿠팡이츠 설정을 기본값으로 되돌릴까요?")) return;
-    updateChannelSetting(CHANNEL_ID, getDefaultChannelUpdate(CHANNEL_ID));
-    setValues(readValues());
-    setErrors({});
-    setMessage("쿠팡이츠 설정을 기본값으로 되돌렸습니다.");
+    saveFlow.requestSave(createPlatformFeeSettings(
+      getBusinessFeeSettings(),
+      "coupang-eats",
+      { [CHANNEL_ID]: getDefaultChannelUpdate(CHANNEL_ID) },
+    ));
   }
 
   if (!values) return <SettingsLoading />;
@@ -114,8 +118,10 @@ export default function CoupangEatsSettingsPage() {
           <FeeRateField id="coupangPaymentRate" label="결제수수료율" value={values.paymentRate} error={errors.paymentRate} onChange={(value) => change("paymentRate", value)} />
           <PerOrderFeeField id="coupangDeliveryFee" label="건당 배달료" value={values.deliveryFeePerOrder} error={errors.deliveryFeePerOrder} onChange={(value) => change("deliveryFeePerOrder", value)} />
         </SettingChannelCard>
+        {saveFlow.status}
         <SettingsFormActions message={message} onRestore={restore} />
       </form>
+      {saveFlow.dialogs}
     </SettingsPageLayout>
   );
 }

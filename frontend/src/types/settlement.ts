@@ -54,6 +54,32 @@ export interface BusinessFeeSettings {
   >;
 }
 
+export type FeeSettingSource = "legacy" | "history" | "default";
+
+export type PlatformFeeSettings = Readonly<
+  Partial<Record<SettlementChannelId, SettlementChannelSetting>>
+>;
+
+export interface PlatformFeeSettingHistoryEntry {
+  readonly effectiveFrom: import("@/types/business-day").BusinessDate;
+  readonly settings: PlatformFeeSettings;
+  readonly createdAt: string;
+}
+
+export interface BusinessFeeSettingsStorageData {
+  readonly version: 2;
+  readonly legacySettings: BusinessFeeSettings;
+  readonly history: Readonly<
+    Record<SettlementPlatformId, readonly PlatformFeeSettingHistoryEntry[]>
+  >;
+}
+
+export interface ResolvedPlatformFeeSettings {
+  readonly settings: PlatformFeeSettings;
+  readonly source: FeeSettingSource;
+  readonly effectiveFrom: import("@/types/business-day").BusinessDate | null;
+}
+
 export interface SettlementCalculationInput {
   channelId: SettlementChannelId;
   salesAmount: number;

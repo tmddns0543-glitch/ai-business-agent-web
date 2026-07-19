@@ -3,9 +3,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import { FeeRateField, PerOrderFeeField, SettingChannelCard } from "@/components/settings/fee-setting-fields";
-import { getDefaultChannelUpdate, parseSettingNumber, validateFeeRate, validatePerOrderFee } from "@/components/settings/fee-setting-utils";
+import { createPlatformFeeSettings, getDefaultChannelUpdate, parseSettingNumber, validateFeeRate, validatePerOrderFee } from "@/components/settings/fee-setting-utils";
+import { useFeeSettingSaveFlow } from "@/components/settings/fee-setting-save-flow";
 import { SettingsFormActions, SettingsLoading, SettingsPageLayout } from "@/components/settings/settings-page-parts";
-import { getBusinessFeeSettings, updateChannelSetting } from "@/lib/storage/fee-settings-storage";
+import { getBusinessFeeSettings } from "@/lib/storage/fee-settings-storage";
 import { SETTLEMENT_CHANNEL_IDS, type BusinessFeeSettings } from "@/types/settlement";
 
 const CHANNEL_IDS = {
@@ -33,6 +34,7 @@ function readValues() { return createValues(getBusinessFeeSettings()); }
 
 export default function YogiyoSettingsPage() {
   const [values, setValues] = useState<Values | null>(null); const [errors, setErrors] = useState<Errors>({}); const [message, setMessage] = useState("");
+  const saveFlow = useFeeSettingSaveFlow({ platformId: "yogiyo", onMessage: setMessage, onSaved: () => { setValues(readValues()); setErrors({}); setMessage("요기요 설정을 저장했습니다."); } });
   /* eslint-disable react-hooks/set-state-in-effect -- LocalStorage settings hydrate after mount. */
   useEffect(() => setValues(readValues()), []);
   /* eslint-enable react-hooks/set-state-in-effect */
@@ -46,19 +48,17 @@ export default function YogiyoSettingsPage() {
     nextErrors.cardRate = validateFeeRate(normalized.cardRate, 1.5); nextErrors.deliveryFeePerOrder = validatePerOrderFee(normalized.deliveryFeePerOrder);
     const active = Object.fromEntries(Object.entries(nextErrors).filter(([, error]) => error)) as Errors;
     if (Object.keys(active).length) { setErrors(active); setMessage("입력값을 확인한 뒤 다시 저장해주세요."); return; }
-    updateChannelSetting(CHANNEL_IDS.prepaid, { brokerageRate: normalized.prepaidBrokerageRate, paymentRate: normalized.prepaidPaymentRate });
-    updateChannelSetting(CHANNEL_IDS.card, { brokerageRate: normalized.cardBrokerageRate, cardRate: normalized.cardRate });
-    updateChannelSetting(CHANNEL_IDS.cash, { brokerageRate: normalized.cashBrokerageRate });
-    updateChannelSetting(CHANNEL_IDS.delivery, { brokerageRate: normalized.deliveryBrokerageRate, paymentRate: normalized.deliveryPaymentRate, deliveryFeePerOrder: normalized.deliveryFeePerOrder });
-    const saved = readValues(); const didSave = (Object.keys(saved) as Field[]).every((field) => Number(saved[field]) === normalized[field]);
-    if (!didSave) { setMessage("설정을 저장하지 못했습니다. 다시 시도해주세요."); return; }
-    setValues(saved); setErrors({}); setMessage("요기요 설정을 저장했습니다.");
+    saveFlow.requestSave(createPlatformFeeSettings(getBusinessFeeSettings(), "yogiyo", {
+      [CHANNEL_IDS.prepaid]: { brokerageRate: normalized.prepaidBrokerageRate, paymentRate: normalized.prepaidPaymentRate },
+      [CHANNEL_IDS.card]: { brokerageRate: normalized.cardBrokerageRate, cardRate: normalized.cardRate },
+      [CHANNEL_IDS.cash]: { brokerageRate: normalized.cashBrokerageRate },
+      [CHANNEL_IDS.delivery]: { brokerageRate: normalized.deliveryBrokerageRate, paymentRate: normalized.deliveryPaymentRate, deliveryFeePerOrder: normalized.deliveryFeePerOrder },
+    }));
   }
 
   function restore() {
     if (!window.confirm("요기요 설정을 기본값으로 되돌릴까요?")) return;
-    for (const channelId of Object.values(CHANNEL_IDS)) updateChannelSetting(channelId, getDefaultChannelUpdate(channelId));
-    setValues(readValues()); setErrors({}); setMessage("요기요 설정을 기본값으로 되돌렸습니다.");
+    saveFlow.requestSave(createPlatformFeeSettings(getBusinessFeeSettings(), "yogiyo", Object.fromEntries(Object.values(CHANNEL_IDS).map((channelId) => [channelId, getDefaultChannelUpdate(channelId)]))));
   }
   if (!values) return <SettingsLoading />;
   return <SettingsPageLayout title="요기요 설정" description="요기요 계약서에 표시된 수수료와 건당 배달료를 입력하세요."><form onSubmit={save} noValidate><div className="space-y-4">
@@ -66,5 +66,5 @@ export default function YogiyoSettingsPage() {
     <SettingChannelCard title="가게배달 카드"><FeeRateField id="yogiyoCardBrokerage" label="중개수수료율" value={values.cardBrokerageRate} error={errors.cardBrokerageRate} onChange={(v) => change("cardBrokerageRate", v)} /><FeeRateField id="yogiyoCardRate" label="카드수수료율" value={values.cardRate} max={1.5} error={errors.cardRate} onChange={(v) => change("cardRate", v)} /></SettingChannelCard>
     <SettingChannelCard title="가게배달 현금"><FeeRateField id="yogiyoCashBrokerage" label="중개수수료율" value={values.cashBrokerageRate} error={errors.cashBrokerageRate} onChange={(v) => change("cashBrokerageRate", v)} /></SettingChannelCard>
     <SettingChannelCard title="요기배달"><FeeRateField id="yogiyoDeliveryBrokerage" label="중개수수료율" value={values.deliveryBrokerageRate} error={errors.deliveryBrokerageRate} onChange={(v) => change("deliveryBrokerageRate", v)} /><FeeRateField id="yogiyoDeliveryPayment" label="결제수수료율" value={values.deliveryPaymentRate} error={errors.deliveryPaymentRate} onChange={(v) => change("deliveryPaymentRate", v)} /><PerOrderFeeField id="yogiyoDeliveryFee" label="건당 배달료" value={values.deliveryFeePerOrder} error={errors.deliveryFeePerOrder} onChange={(v) => change("deliveryFeePerOrder", v)} /></SettingChannelCard>
-  </div><SettingsFormActions message={message} onRestore={restore} /></form></SettingsPageLayout>;
+  </div>{saveFlow.status}<SettingsFormActions message={message} onRestore={restore} /></form>{saveFlow.dialogs}</SettingsPageLayout>;
 }

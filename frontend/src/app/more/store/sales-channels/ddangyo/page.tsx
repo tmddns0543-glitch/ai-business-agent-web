@@ -3,9 +3,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import { FeeRateField, SettingChannelCard } from "@/components/settings/fee-setting-fields";
-import { getDefaultChannelUpdate, parseSettingNumber, validateFeeRate } from "@/components/settings/fee-setting-utils";
+import { createPlatformFeeSettings, getDefaultChannelUpdate, parseSettingNumber, validateFeeRate } from "@/components/settings/fee-setting-utils";
+import { useFeeSettingSaveFlow } from "@/components/settings/fee-setting-save-flow";
 import { SettingsFormActions, SettingsLoading, SettingsPageLayout } from "@/components/settings/settings-page-parts";
-import { getBusinessFeeSettings, updateChannelSetting } from "@/lib/storage/fee-settings-storage";
+import { getBusinessFeeSettings } from "@/lib/storage/fee-settings-storage";
 import { SETTLEMENT_CHANNEL_IDS } from "@/types/settlement";
 
 const CHANNEL_ID = SETTLEMENT_CHANNEL_IDS.DDANGYO_SHOP_DELIVERY_PREPAID;
@@ -21,6 +22,7 @@ export default function DdangyoSettingsPage() {
   const [values, setValues] = useState<Values | null>(null);
   const [errors, setErrors] = useState<Errors>({});
   const [message, setMessage] = useState("");
+  const saveFlow = useFeeSettingSaveFlow({ platformId: "ddangyo", onMessage: setMessage, onSaved: () => { setValues(readValues()); setErrors({}); setMessage("땡겨요 설정을 저장했습니다."); } });
   /* eslint-disable react-hooks/set-state-in-effect -- LocalStorage settings hydrate after mount. */
   useEffect(() => setValues(readValues()), []);
   /* eslint-enable react-hooks/set-state-in-effect */
@@ -37,18 +39,14 @@ export default function DdangyoSettingsPage() {
     const nextErrors: Errors = { brokerageRate: validateFeeRate(normalized.brokerageRate), paymentRate: validateFeeRate(normalized.paymentRate) };
     const active = Object.fromEntries(Object.entries(nextErrors).filter(([, error]) => error)) as Errors;
     if (Object.keys(active).length) { setErrors(active); setMessage("입력값을 확인한 뒤 다시 저장해주세요."); return; }
-    updateChannelSetting(CHANNEL_ID, normalized);
-    const saved = readValues();
-    if (Number(saved.brokerageRate) !== normalized.brokerageRate || Number(saved.paymentRate) !== normalized.paymentRate) { setMessage("설정을 저장하지 못했습니다. 다시 시도해주세요."); return; }
-    setValues(saved); setErrors({}); setMessage("땡겨요 설정을 저장했습니다.");
+    saveFlow.requestSave(createPlatformFeeSettings(getBusinessFeeSettings(), "ddangyo", { [CHANNEL_ID]: normalized }));
   }
 
   function restore() {
     if (!window.confirm("땡겨요 설정을 기본값으로 되돌릴까요?")) return;
-    updateChannelSetting(CHANNEL_ID, getDefaultChannelUpdate(CHANNEL_ID));
-    setValues(readValues()); setErrors({}); setMessage("땡겨요 설정을 기본값으로 되돌렸습니다.");
+    saveFlow.requestSave(createPlatformFeeSettings(getBusinessFeeSettings(), "ddangyo", { [CHANNEL_ID]: getDefaultChannelUpdate(CHANNEL_ID) }));
   }
 
   if (!values) return <SettingsLoading />;
-  return <SettingsPageLayout title="땡겨요 설정" description="땡겨요 계약서에 표시된 수수료를 입력하세요."><form onSubmit={save} noValidate><SettingChannelCard title="가게배달 선결제"><FeeRateField id="ddangyoBrokerageRate" label="중개수수료율" value={values.brokerageRate} error={errors.brokerageRate} onChange={(value) => change("brokerageRate", value)} /><FeeRateField id="ddangyoPaymentRate" label="결제수수료율" value={values.paymentRate} error={errors.paymentRate} onChange={(value) => change("paymentRate", value)} /></SettingChannelCard><SettingsFormActions message={message} onRestore={restore} /></form></SettingsPageLayout>;
+  return <SettingsPageLayout title="땡겨요 설정" description="땡겨요 계약서에 표시된 수수료를 입력하세요."><form onSubmit={save} noValidate><SettingChannelCard title="가게배달 선결제"><FeeRateField id="ddangyoBrokerageRate" label="중개수수료율" value={values.brokerageRate} error={errors.brokerageRate} onChange={(value) => change("brokerageRate", value)} /><FeeRateField id="ddangyoPaymentRate" label="결제수수료율" value={values.paymentRate} error={errors.paymentRate} onChange={(value) => change("paymentRate", value)} /></SettingChannelCard>{saveFlow.status}<SettingsFormActions message={message} onRestore={restore} /></form>{saveFlow.dialogs}</SettingsPageLayout>;
 }
