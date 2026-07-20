@@ -1,5 +1,8 @@
 import Link from "next/link";
 
+import { BusinessNameForm } from "@/components/settings/business-name-form";
+import { requireCurrentBusiness } from "@/lib/auth/current-context";
+
 const STORE_SETTING_ITEMS = [
   {
     title: "매출채널 설정",
@@ -19,7 +22,8 @@ const STORE_SETTING_ITEMS = [
   },
 ] as const;
 
-export default function StoreSettingsPage() {
+export default async function StoreSettingsPage() {
+  const business = await requireCurrentBusiness();
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-5">
       <div className="mx-auto min-h-[calc(100vh-2.5rem)] max-w-md rounded-[2rem] bg-white px-5 pb-12 pt-6 shadow-sm">
@@ -41,7 +45,11 @@ export default function StoreSettingsPage() {
           </p>
         </header>
 
-        <section className="mt-7 space-y-3" aria-label="내 가게 설정 메뉴">
+        <section className="mt-7" aria-label="사업장 기본 정보">
+          <BusinessNameForm initialName={business.name} canEdit={business.role === "owner"} />
+        </section>
+
+        <section className="mt-5 space-y-3" aria-label="내 가게 설정 메뉴">
           {STORE_SETTING_ITEMS.map((item) => (
             <Link
               key={item.href}

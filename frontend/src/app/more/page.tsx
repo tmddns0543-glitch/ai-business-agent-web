@@ -1,5 +1,8 @@
 import Link from "next/link";
 
+import { logoutAction } from "@/app/auth/actions";
+import { requireAuthenticatedUser, requireCurrentBusiness } from "@/lib/auth/current-context";
+
 const MORE_MENU_ITEMS = [
   {
     title: "내 가게 설정",
@@ -13,7 +16,11 @@ const MORE_MENU_ITEMS = [
   },
 ] as const;
 
-export default function MorePage() {
+export default async function MorePage() {
+  const [user, business] = await Promise.all([
+    requireAuthenticatedUser(),
+    requireCurrentBusiness(),
+  ]);
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-5">
       <div className="mx-auto min-h-[calc(100vh-2.5rem)] max-w-md rounded-[2rem] bg-white px-5 pb-28 pt-6 shadow-sm">
@@ -35,7 +42,19 @@ export default function MorePage() {
           </p>
         </header>
 
-        <section className="mt-7 space-y-3" aria-label="더보기 메뉴">
+        <section className="mt-7 rounded-2xl bg-slate-50 p-4" aria-label="계정 정보">
+          <p className="text-xs font-bold text-slate-400">로그인 계정</p>
+          <p className="mt-1 break-all text-sm font-semibold text-slate-800">{user.email ?? "이메일 정보 없음"}</p>
+          <div className="mt-4 border-t border-slate-200 pt-4">
+            <p className="text-xs font-bold text-slate-400">사업장</p>
+            <p className="mt-1 text-base font-bold text-slate-900">{business.name}</p>
+          </div>
+          <form action={logoutAction} className="mt-4">
+            <button type="submit" className="h-11 w-full rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-600">로그아웃</button>
+          </form>
+        </section>
+
+        <section className="mt-5 space-y-3" aria-label="더보기 메뉴">
           {MORE_MENU_ITEMS.map((item) => (
             <Link
               key={item.href}
