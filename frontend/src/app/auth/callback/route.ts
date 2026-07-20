@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
       const { error } = code
         ? await supabase.auth.exchangeCodeForSession(code)
         : await supabase.auth.verifyOtp({ token_hash: tokenHash!, type: type! });
-      if (!error) return NextResponse.redirect(new URL(next, request.url));
+      if (!error) return NextResponse.redirect(new URL(next === "/" ? "/onboarding/business" : next, request.url));
     } catch {
       // Redirect below without exposing provider details.
     }

@@ -2,6 +2,7 @@ import type { User } from "@supabase/supabase-js";
 import { redirect } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/server";
+import { getSafeDatabaseDiagnostic, type AuthDatabaseErrorKind } from "@/lib/auth/auth-database-error";
 import type { MembershipRole } from "@/types/database";
 
 export type CurrentBusiness = {
@@ -11,18 +12,55 @@ export type CurrentBusiness = {
   role: MembershipRole;
 };
 
+type MembershipCandidate = { business_id: string; role: MembershipRole };
+type BusinessCandidate = { id: string; name: string; status: "active" | "archived" };
+
+export function selectCurrentBusinessFromRows(
+  memberships: readonly MembershipCandidate[],
+  businesses: readonly BusinessCandidate[],
+): CurrentBusiness | null {
+  if (!memberships.length || !businesses.length) return null;
+  const activeBusinesses = businesses.filter((item) => item.status === "active");
+  const activeBusinessIds = new Set(activeBusinesses.map((item) => item.id));
+  const membership = memberships.find((item) => item.role === "owner" && activeBusinessIds.has(item.business_id))
+    ?? memberships.find((item) => activeBusinessIds.has(item.business_id));
+  if (!membership) return null;
+  const business = activeBusinesses.find((item) => item.id === membership.business_id);
+  return business ? { ...business, role: membership.role } : null;
+}
+
 export type AuthContextErrorCode =
   | "unauthenticated"
   | "business-missing"
+  | "relation-missing"
   | "permission-denied"
+  | "rls-recursion"
   | "database-error"
   | "configuration-error";
 
 export class AuthContextError extends Error {
-  constructor(public readonly code: AuthContextErrorCode, message: string) {
+  constructor(
+    public readonly code: AuthContextErrorCode,
+    message: string,
+    public readonly databaseCode?: string,
+  ) {
     super(message);
     this.name = "AuthContextError";
   }
+}
+
+function throwDatabaseContextError(error: { code?: string; message?: string }, resource: "membership" | "business"): never {
+  const diagnostic = getSafeDatabaseDiagnostic(error, resource);
+  if (process.env.NODE_ENV === "development") {
+    console.error("[AuthContext]", diagnostic);
+  }
+  const errorCode: Record<AuthDatabaseErrorKind, AuthContextErrorCode> = {
+    "relation-missing": "relation-missing",
+    "permission-denied": "permission-denied",
+    "rls-recursion": "rls-recursion",
+    "database-error": "database-error",
+  };
+  throw new AuthContextError(errorCode[diagnostic.kind], diagnostic.message, diagnostic.code);
 }
 
 export async function getCurrentUser(): Promise<User | null> {
@@ -43,44 +81,33 @@ export async function requireAuthenticatedUser(): Promise<User> {
 
 async function readCurrentBusiness(userId: string): Promise<CurrentBusiness | null> {
   const supabase = await createClient();
-  const { data: membership, error: membershipError } = await supabase
+  const { data: memberships, error: membershipError } = await supabase
     .from("business_memberships")
     .select("business_id, role")
     .eq("user_id", userId)
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .eq("status", "active")
+    .order("created_at", { ascending: true });
 
   if (membershipError) {
-    const code = membershipError.code === "42501" ? "permission-denied" : "database-error";
-    throw new AuthContextError(code, "사업장 권한을 확인하지 못했습니다.");
+    throwDatabaseContextError(membershipError, "membership");
   }
-  if (!membership) return null;
+  if (!memberships?.length) return null;
 
-  const { data: business, error: businessError } = await supabase
+  const { data: businesses, error: businessError } = await supabase
     .from("businesses")
     .select("id, name, status")
-    .eq("id", membership.business_id)
-    .maybeSingle();
+    .eq("status", "active")
+    .in("id", memberships.map((item) => item.business_id));
 
   if (businessError) {
-    const code = businessError.code === "42501" ? "permission-denied" : "database-error";
-    throw new AuthContextError(code, "사업장 정보를 불러오지 못했습니다.");
+    throwDatabaseContextError(businessError, "business");
   }
-  if (!business) return null;
-
-  return { ...business, role: membership.role };
+  return selectCurrentBusinessFromRows(memberships, businesses ?? []);
 }
 
 export async function getCurrentBusiness(): Promise<CurrentBusiness | null> {
   const user = await getCurrentUser();
   if (!user) return null;
-  const existing = await readCurrentBusiness(user.id);
-  if (existing) return existing;
-
-  const supabase = await createClient();
-  const { error } = await supabase.rpc("ensure_current_user_business");
-  if (error) throw new AuthContextError("business-missing", "기본 사업장을 준비하지 못했습니다.");
   return readCurrentBusiness(user.id);
 }
 

@@ -6,7 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "check:supabase-env": "node scripts/check-supabase-env.mjs",
+    "check:supabase-schema": "node scripts/check-supabase-schema.mjs",
+    "test:sales": "tsx --test src/repositories/sales/*.test.ts",
+    "test:auth-business": "tsx --test src/lib/auth/*.test.ts src/lib/business/*.test.ts src/lib/supabase/*.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.3",
@@ -23,6 +27,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
     "tailwindcss": "^4",
+    "tsx": "^4.23.1",
     "typescript": "^5"
   }
 }

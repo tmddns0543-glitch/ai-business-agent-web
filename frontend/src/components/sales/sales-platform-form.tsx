@@ -7,10 +7,7 @@ import { useRouter } from "next/navigation";
 import MoneyField from "@/components/sales/money-field";
 import { getSelectedBusinessDate } from "@/lib/storage/business-day-storage";
 import { setSectionUnconfirmed } from "@/lib/storage/closing-status-by-business-day-storage";
-import {
-  getPlatformSalesByBusinessDate,
-  savePlatformSalesByBusinessDate,
-} from "@/lib/storage/sales-by-business-day-storage";
+import { getSalesRepository } from "@/repositories/sales/get-sales-repository";
 import {
   formatBusinessDate,
   type BusinessDate,
@@ -54,19 +51,25 @@ export default function SalesPlatformForm({ config }: SalesPlatformFormProps) {
   const [isLoaded, setIsLoaded] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [businessDate, setBusinessDate] = useState<BusinessDate | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   /* eslint-disable react-hooks/set-state-in-effect -- LocalStorage hydration runs only after the client mounts. */
   useEffect(() => {
+    let active = true;
     const selectedBusinessDate = getSelectedBusinessDate();
-    const saved = getPlatformSalesByBusinessDate(
-      selectedBusinessDate,
-      config.platformKey,
-    );
-
     setBusinessDate(selectedBusinessDate);
-    setValues(createFormValues(config, saved));
-
-    setIsLoaded(true);
+    getSalesRepository().getPlatformSnapshot(selectedBusinessDate, config.platformKey)
+      .then((saved) => {
+        if (!active) return;
+        setValues(createFormValues(config, saved));
+        setIsLoaded(true);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setLoadError(error instanceof Error ? error.message : "매출을 불러오지 못했습니다.");
+        setIsLoaded(true);
+      });
+    return () => { active = false; };
   }, [config]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -85,7 +88,7 @@ export default function SalesPlatformForm({ config }: SalesPlatformFormProps) {
     }));
   }
 
-  function saveValues() {
+  async function saveValues() {
     if (isSaving) {
       return;
     }
@@ -98,10 +101,14 @@ export default function SalesPlatformForm({ config }: SalesPlatformFormProps) {
       return;
     }
 
-    const savedValues = createFormValues(
-      config,
-      getPlatformSalesByBusinessDate(businessDate, config.platformKey),
-    );
+    let savedValues: SalesFormValues;
+    try {
+      savedValues = createFormValues(config, await getSalesRepository().getPlatformSnapshot(businessDate, config.platformKey));
+    } catch (error) {
+      setIsSaving(false);
+      window.alert(error instanceof Error ? error.message : "매출을 불러오지 못했습니다.");
+      return;
+    }
     const hasChanges = config.fields.some(
       ({ key }) => savedValues[key] !== (values[key] ?? 0),
     );
@@ -111,15 +118,11 @@ export default function SalesPlatformForm({ config }: SalesPlatformFormProps) {
       return;
     }
 
-    if (
-      !savePlatformSalesByBusinessDate(
-        businessDate,
-        config.platformKey,
-        values,
-      )
-    ) {
+    try {
+      await getSalesRepository().savePlatformSnapshot(businessDate, config.platformKey, values);
+    } catch (error) {
       setIsSaving(false);
-      window.alert("매출을 저장하지 못했습니다. 다시 시도해주세요.");
+      window.alert(error instanceof Error ? error.message : "매출을 저장하지 못했습니다. 다시 시도해주세요.");
       return;
     }
 
@@ -183,6 +186,10 @@ export default function SalesPlatformForm({ config }: SalesPlatformFormProps) {
           </p>
         </section>
 
+        {loadError && (
+          <p className="mt-4 rounded-xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{loadError}</p>
+        )}
+
         <section className="mt-6 space-y-3">
           {config.fields.map((field) => (
             <MoneyField
@@ -200,7 +207,7 @@ export default function SalesPlatformForm({ config }: SalesPlatformFormProps) {
           <button
             type="button"
             onClick={saveValues}
-            disabled={isSaving}
+            disabled={isSaving || !isLoaded || Boolean(loadError)}
             className="w-full rounded-2xl bg-indigo-600 px-4 py-4 text-base font-bold text-white transition hover:bg-indigo-700 disabled:cursor-wait disabled:bg-indigo-400"
           >
             {isSaving ? "저장 중..." : "저장하기"}
@@ -209,7 +216,7 @@ export default function SalesPlatformForm({ config }: SalesPlatformFormProps) {
           <button
             type="button"
             onClick={resetValues}
-            disabled={isSaving}
+            disabled={isSaving || !isLoaded || Boolean(loadError)}
             className="w-full rounded-2xl border border-slate-200 px-4 py-4 text-sm font-semibold text-slate-500 transition hover:bg-slate-50"
           >
             입력값 초기화

@@ -5,6 +5,7 @@ import { getSupabaseConfig } from "@/lib/supabase/config";
 import type { Database } from "@/types/database";
 
 const PUBLIC_PATHS = ["/login", "/signup", "/forgot-password", "/reset-password", "/auth/callback"];
+const ONBOARDING_PATH = "/onboarding/business";
 
 function isPublicPath(pathname: string) {
   return PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
@@ -48,8 +49,21 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (authenticated && (pathname === "/login" || pathname === "/signup")) {
-    return NextResponse.redirect(new URL("/", request.url));
+  if (authenticated) {
+    const userId = data?.claims?.sub;
+    if (typeof userId !== "string") return response;
+    const { data: hasBusiness, error: membershipError } = await supabase.rpc("has_current_business");
+
+    if (!membershipError) {
+      if (!hasBusiness && pathname !== ONBOARDING_PATH && !pathname.startsWith("/auth/")) {
+        return NextResponse.redirect(new URL(ONBOARDING_PATH, request.url));
+      }
+      if (hasBusiness && (pathname === ONBOARDING_PATH || pathname === "/login" || pathname === "/signup")) {
+        return NextResponse.redirect(new URL("/", request.url));
+      }
+    } else if (pathname === "/login" || pathname === "/signup") {
+      return NextResponse.redirect(new URL("/", request.url));
+    }
   }
 
   return response;

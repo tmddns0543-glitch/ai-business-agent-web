@@ -138,19 +138,32 @@ export default function SalesPage() {
   const [isNoSalesConfirmed, setIsNoSalesConfirmed] = useState(false);
   const [isNoSalesDialogOpen, setIsNoSalesDialogOpen] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   /* eslint-disable react-hooks/set-state-in-effect -- LocalStorage hydration runs only after the client mounts. */
   useEffect(() => {
+    let active = true;
     const selectedBusinessDate = getSelectedBusinessDate();
 
     setBusinessDate(selectedBusinessDate);
-    setSummary(getSalesSettlementFromStorage());
     setIsNoSalesConfirmed(
       getClosingStatusByBusinessDate(selectedBusinessDate).salesStatus ===
         "confirmed",
     );
+    getSalesSettlementFromStorage()
+      .then((nextSummary) => {
+        if (active) setSummary(nextSummary);
+      })
+      .catch((error: unknown) => {
+        if (active) setLoadError(error instanceof Error ? error.message : "정산 정보를 불러오지 못했습니다.");
+      });
+    return () => { active = false; };
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
+
+  if (loadError) {
+    return <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4"><p className="max-w-md rounded-xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{loadError}</p></main>;
+  }
 
   if (!summary || !businessDate) {
     return (

@@ -4,18 +4,18 @@ import {
 } from "@/lib/settlement/calculate-sales-settlement";
 import { getSelectedBusinessDate } from "@/lib/storage/business-day-storage";
 import { resolveBusinessFeeSettingsForBusinessDate } from "@/lib/storage/fee-settings-storage";
-import { getSalesByBusinessDate } from "@/lib/storage/sales-by-business-day-storage";
+import { getSalesRepository } from "@/repositories/sales/get-sales-repository";
 import type { BusinessDate } from "@/types/business-day";
 
-export function getSalesSettlementByBusinessDate(
+export async function getSalesSettlementByBusinessDate(
   businessDate: BusinessDate,
-): SalesSettlementSummary {
-  const salesByPlatform = getSalesByBusinessDate(businessDate);
+): Promise<SalesSettlementSummary> {
+  const salesByPlatform = await getSalesRepository().getStoredSalesByDate(businessDate);
   const settings = resolveBusinessFeeSettingsForBusinessDate(businessDate);
 
   return calculateSalesSettlement(salesByPlatform, settings);
 }
 
-export function getSalesSettlementFromStorage(): SalesSettlementSummary {
+export function getSalesSettlementFromStorage(): Promise<SalesSettlementSummary> {
   return getSalesSettlementByBusinessDate(getSelectedBusinessDate());
 }

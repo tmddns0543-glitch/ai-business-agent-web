@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type ChangeEvent, type MouseEvent } from "react";
+import { useEffect, useState, type ChangeEvent, type MouseEvent } from "react";
+
+import { getSalesImportContextAction, type SalesImportContext } from "@/app/actions/sales";
 
 import {
   createAppBackupDocument,
@@ -12,6 +14,7 @@ import {
   validateAppBackupText,
   type AppBackupDocument,
 } from "@/lib/storage/app-data-backup";
+import { getLocalSalesImportPreview, importLocalSalesToSupabase, type LocalSalesImportPreview, type LocalSalesImportResult } from "@/services/sales/import-local-sales-to-supabase";
 
 const MAX_BACKUP_FILE_SIZE = 10 * 1024 * 1024;
 
@@ -25,6 +28,23 @@ export default function DataManagementPage() {
   const [isReadingFile, setIsReadingFile] = useState(false);
   const [isRestoreDialogOpen, setIsRestoreDialogOpen] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [isImportingSales, setIsImportingSales] = useState(false);
+  const [salesImportResult, setSalesImportResult] = useState<LocalSalesImportResult | null>(null);
+  const [salesImportContext, setSalesImportContext] = useState<SalesImportContext | null>(null);
+  const [salesImportPreview, setSalesImportPreview] = useState<LocalSalesImportPreview | null>(null);
+  const [isLoadingSalesImport, setIsLoadingSalesImport] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    getSalesImportContextAction().then((result) => {
+      if (!active) return;
+      setSalesImportPreview(getLocalSalesImportPreview());
+      if (result.ok) setSalesImportContext(result.data);
+      else setError(result.message);
+      setIsLoadingSalesImport(false);
+    });
+    return () => { active = false; };
+  }, []);
 
   function clearSelectedBackup() {
     setSelectedFileName(null);
@@ -148,6 +168,21 @@ export default function DataManagementPage() {
     window.setTimeout(() => router.push("/"), 700);
   }
 
+  async function importSales() {
+    if (isImportingSales || !salesImportContext || !salesImportPreview || salesImportPreview.recordCount === 0) return;
+    if (!window.confirm(`현재 브라우저에 저장된 2026년 6월 매출을 '${salesImportContext.businessName}' 사업장으로 가져올까요?`)) return;
+    setIsImportingSales(true);
+    setSalesImportResult(null);
+    setError(null);
+    try {
+      setSalesImportResult(await importLocalSalesToSupabase());
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : "기존 매출을 가져오지 못했습니다.");
+    } finally {
+      setIsImportingSales(false);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-5">
       <div className="mx-auto min-h-[calc(100vh-2.5rem)] max-w-md rounded-[2rem] bg-white px-5 pb-12 pt-6 shadow-sm">
@@ -213,6 +248,41 @@ export default function DataManagementPage() {
           >
             {isReadingFile ? "파일 확인 중..." : "데이터 복원하기"}
           </button>
+        </section>
+
+        <section className="mt-4 rounded-2xl border border-slate-200 p-5">
+          <h2 className="text-lg font-bold text-slate-950">2026년 6월 매출 가져오기</h2>
+          {isLoadingSalesImport ? (
+            <p className="mt-2 text-sm text-slate-500">가져올 데이터와 사업장을 확인하고 있습니다.</p>
+          ) : salesImportContext && salesImportPreview ? (
+            <div className="mt-3 space-y-2 text-sm leading-6 text-slate-600">
+              <p>현재 브라우저에 저장된 2026년 6월 매출을 <strong className="text-slate-900">‘{salesImportContext.businessName}’</strong> 사업장으로 가져옵니다.</p>
+              <div className="rounded-xl bg-slate-50 px-4 py-3 text-xs">
+                <p>대상 기간: 2026-06-01 ~ 2026-06-30</p>
+                <p>LocalStorage: {salesImportPreview.dayCount}일 · {salesImportPreview.recordCount}개 채널{salesImportPreview.invalidCount > 0 ? ` · 검증 실패 ${salesImportPreview.invalidCount}건` : ""}</p>
+                <p>Supabase 기존 데이터: {salesImportContext.databaseJuneRecordCount}개 채널</p>
+              </div>
+              <p className="text-xs text-slate-500">6월 외 데이터는 가져오지 않습니다. 원본 LocalStorage는 성공 후에도 유지되며, 같은 채널은 중복 저장하지 않습니다.</p>
+              {salesImportContext.diagnostic && (
+                <details className="rounded-xl border border-slate-200 px-4 py-2 text-xs">
+                  <summary className="cursor-pointer font-semibold">개발 진단 정보</summary>
+                  <p className="mt-2 break-all">user: {salesImportContext.diagnostic.userId}</p>
+                  <p className="break-all">business: {salesImportContext.diagnostic.businessId}</p>
+                  <p>role: {salesImportContext.role} · mode: {salesImportContext.storageMode}</p>
+                </details>
+              )}
+            </div>
+          ) : null}
+          <button type="button" onClick={importSales} disabled={isLoadingSalesImport || isImportingSales || isRestoring || !salesImportContext || !salesImportPreview || salesImportPreview.recordCount === 0} className="mt-5 min-h-14 w-full rounded-2xl bg-indigo-600 px-4 text-base font-bold text-white disabled:cursor-not-allowed disabled:bg-indigo-300">
+            {isImportingSales ? "6월 매출 가져오는 중..." : salesImportPreview?.recordCount === 0 ? "가져올 6월 매출 없음" : "이 기기의 6월 매출 가져오기"}
+          </button>
+          {salesImportResult && (
+            <div className="mt-4 rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              <p className="font-bold">총 {salesImportResult.total}건 · 성공 {salesImportResult.imported}건 · 중복 {salesImportResult.skipped}건 · 실패 {salesImportResult.failed}건</p>
+              {salesImportResult.failed === 0 && <p className="mt-1 text-xs text-emerald-700">기존 LocalStorage 매출은 그대로 유지됩니다.</p>}
+              {salesImportResult.errors.map((item) => <p key={item.recordId} className="mt-1 break-all text-xs text-rose-700">{item.recordId}: {item.message}</p>)}
+            </div>
+          )}
         </section>
 
         {error && (

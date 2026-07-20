@@ -56,11 +56,7 @@ import {
   removeExpensesByBusinessDate,
   replaceExpensesByBusinessDate,
 } from "@/lib/storage/expense-by-business-day-storage";
-import {
-  getSalesByBusinessDate,
-  removeSalesByBusinessDate,
-  replaceSalesByBusinessDate,
-} from "@/lib/storage/sales-by-business-day-storage";
+import { getSalesRepository } from "@/repositories/sales/get-sales-repository";
 import {
   isValidBusinessDate,
   type BusinessDate,
@@ -352,9 +348,11 @@ export default function ClosingPage() {
     null,
   );
   const [isLoaded, setIsLoaded] = useState(false);
+  const [salesLoadError, setSalesLoadError] = useState<string | null>(null);
 
   /* eslint-disable react-hooks/set-state-in-effect -- LocalStorage hydration runs only after the client mounts. */
   useEffect(() => {
+    let active = true;
     const isExternalEntry =
       new URLSearchParams(window.location.search).get("entry") === "external";
     const savedBusinessDate = isExternalEntry
@@ -367,14 +365,10 @@ export default function ClosingPage() {
     }
 
     setSelectedBusinessDateState(savedBusinessDate);
-    setSalesSummary(getSalesSettlementByBusinessDate(savedBusinessDate));
     setExpenseSummary(getExpenseSummaryByBusinessDate(savedBusinessDate));
     setDeliverySummary(getDeliverySummaryByBusinessDate(savedBusinessDate));
     setDeliveryTransactionCount(
       getDeliveryTransactionsByBusinessDate(savedBusinessDate).length,
-    );
-    setHasSalesData(
-      Object.keys(getSalesByBusinessDate(savedBusinessDate)).length > 0,
     );
     setHasExpenseMemo(Boolean(getDailyExpenseMemo(savedBusinessDate)));
     setInventoryProfitEnabledState(
@@ -392,7 +386,20 @@ export default function ClosingPage() {
     );
     setStatus(getClosingStatusByBusinessDate(savedBusinessDate));
 
-    setIsLoaded(true);
+    Promise.all([
+      getSalesSettlementByBusinessDate(savedBusinessDate),
+      getSalesRepository().getStoredSalesByDate(savedBusinessDate),
+    ]).then(([summary, storedSales]) => {
+      if (!active) return;
+      setSalesSummary(summary);
+      setHasSalesData(Object.keys(storedSales).length > 0);
+      setIsLoaded(true);
+    }).catch((error: unknown) => {
+      if (!active) return;
+      setSalesLoadError(error instanceof Error ? error.message : "매출을 불러오지 못했습니다.");
+      setIsLoaded(true);
+    });
+    return () => { active = false; };
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -445,15 +452,22 @@ export default function ClosingPage() {
   const allCompleted = completedCount === requiredCount;
   const unconfirmedCount = requiredCount - completedCount;
 
-  function refreshClosingData(businessDate: BusinessDate) {
-    setSalesSummary(getSalesSettlementByBusinessDate(businessDate));
+  async function refreshClosingData(businessDate: BusinessDate) {
+    try {
+      const [summary, storedSales] = await Promise.all([
+        getSalesSettlementByBusinessDate(businessDate),
+        getSalesRepository().getStoredSalesByDate(businessDate),
+      ]);
+      setSalesSummary(summary);
+      setHasSalesData(Object.keys(storedSales).length > 0);
+      setSalesLoadError(null);
+    } catch (error) {
+      setSalesLoadError(error instanceof Error ? error.message : "매출을 불러오지 못했습니다.");
+    }
     setExpenseSummary(getExpenseSummaryByBusinessDate(businessDate));
     setDeliverySummary(getDeliverySummaryByBusinessDate(businessDate));
     setDeliveryTransactionCount(
       getDeliveryTransactionsByBusinessDate(businessDate).length,
-    );
-    setHasSalesData(
-      Object.keys(getSalesByBusinessDate(businessDate)).length > 0,
     );
     setHasExpenseMemo(Boolean(getDailyExpenseMemo(businessDate)));
     setInventoryProfitEnabledState(
@@ -480,7 +494,7 @@ export default function ClosingPage() {
     setDeletionTarget(target);
   }
 
-  function deleteSelectedData() {
+  async function deleteSelectedData() {
     if (!selectedBusinessDate || !deletionTarget || isDeleting) {
       return;
     }
@@ -491,11 +505,21 @@ export default function ClosingPage() {
     let deleted = false;
 
     if (deletionTarget === "sales") {
-      const savedSales = getSalesByBusinessDate(selectedBusinessDate);
+      const salesRepository = getSalesRepository();
+      let savedSales;
+      try {
+        savedSales = await salesRepository.getStoredSalesByDate(selectedBusinessDate);
+      } catch (error) {
+        setIsDeleting(false);
+        setDeletionTarget(null);
+        setDeleteError(error instanceof Error ? error.message : "매출을 불러오지 못했습니다.");
+        return;
+      }
       const hasSavedSales = Object.keys(savedSales).length > 0;
-      const dataCleared = hasSavedSales
-        ? removeSalesByBusinessDate(selectedBusinessDate)
-        : true;
+      let dataCleared = true;
+      try {
+        if (hasSavedSales) await salesRepository.removeByDate(selectedBusinessDate);
+      } catch { dataCleared = false; }
 
       if (
         dataCleared &&
@@ -503,7 +527,7 @@ export default function ClosingPage() {
       ) {
         deleted = true;
       } else if (dataCleared && hasSavedSales) {
-        replaceSalesByBusinessDate(selectedBusinessDate, savedSales);
+        try { await salesRepository.replaceByDate(selectedBusinessDate, savedSales); } catch { dataCleared = false; }
       }
     } else if (deletionTarget === "expenses") {
       const savedTransactions =
@@ -554,7 +578,7 @@ export default function ClosingPage() {
       }
     }
 
-    refreshClosingData(selectedBusinessDate);
+    await refreshClosingData(selectedBusinessDate);
     setIsDeleting(false);
     setDeletionTarget(null);
 
@@ -625,7 +649,7 @@ export default function ClosingPage() {
     setStatus(getClosingStatusByBusinessDate(selectedBusinessDate));
   }
 
-  function openNoSalesDialog(event: MouseEvent<HTMLButtonElement>) {
+  async function openNoSalesDialog(event: MouseEvent<HTMLButtonElement>) {
     event.preventDefault();
     event.stopPropagation();
 
@@ -633,11 +657,13 @@ export default function ClosingPage() {
       return;
     }
 
-    const latestSales = getSalesByBusinessDate(selectedBusinessDate);
+    let latestSales;
+    try { latestSales = await getSalesRepository().getStoredSalesByDate(selectedBusinessDate); }
+    catch (error) { setQuickActionError(error instanceof Error ? error.message : "매출을 불러오지 못했습니다."); return; }
 
     if (Object.keys(latestSales).length > 0) {
       setHasSalesData(true);
-      setSalesSummary(getSalesSettlementByBusinessDate(selectedBusinessDate));
+      setSalesSummary(await getSalesSettlementByBusinessDate(selectedBusinessDate));
       setQuickActionError("이미 입력된 매출이 있습니다.");
       return;
     }
@@ -646,16 +672,18 @@ export default function ClosingPage() {
     setIsNoSalesDialogOpen(true);
   }
 
-  function confirmNoSalesQuick() {
+  async function confirmNoSalesQuick() {
     if (!selectedBusinessDate) {
       return;
     }
 
-    const latestSales = getSalesByBusinessDate(selectedBusinessDate);
+    let latestSales;
+    try { latestSales = await getSalesRepository().getStoredSalesByDate(selectedBusinessDate); }
+    catch (error) { setQuickActionError(error instanceof Error ? error.message : "매출을 불러오지 못했습니다."); return; }
 
     if (Object.keys(latestSales).length > 0) {
       setHasSalesData(true);
-      setSalesSummary(getSalesSettlementByBusinessDate(selectedBusinessDate));
+      setSalesSummary(await getSalesSettlementByBusinessDate(selectedBusinessDate));
       setQuickActionError("이미 입력된 매출이 있습니다.");
       setIsNoSalesDialogOpen(false);
       return;
@@ -668,7 +696,7 @@ export default function ClosingPage() {
 
     setQuickActionError(null);
     setHasSalesData(false);
-    setSalesSummary(getSalesSettlementByBusinessDate(selectedBusinessDate));
+    setSalesSummary(await getSalesSettlementByBusinessDate(selectedBusinessDate));
     setStatus(getClosingStatusByBusinessDate(selectedBusinessDate));
     setIsNoSalesDialogOpen(false);
   }
@@ -702,7 +730,7 @@ export default function ClosingPage() {
     setStatus(getClosingStatusByBusinessDate(selectedBusinessDate));
   }
 
-  function changeBusinessDate(date: string) {
+  async function changeBusinessDate(date: string) {
     if (!isValidBusinessDate(date)) {
       setBusinessDateError(
         "영업일을 변경하지 못했습니다. 다시 시도해주세요.",
@@ -719,13 +747,14 @@ export default function ClosingPage() {
 
     setBusinessDateError(null);
     setSelectedBusinessDateState(date);
-    setSalesSummary(getSalesSettlementByBusinessDate(date));
+    setSalesSummary(null);
+    setSalesLoadError(null);
     setExpenseSummary(getExpenseSummaryByBusinessDate(date));
     setDeliverySummary(getDeliverySummaryByBusinessDate(date));
     setDeliveryTransactionCount(
       getDeliveryTransactionsByBusinessDate(date).length,
     );
-    setHasSalesData(Object.keys(getSalesByBusinessDate(date)).length > 0);
+    await refreshClosingData(date);
     setHasExpenseMemo(Boolean(getDailyExpenseMemo(date)));
     setInventoryProfitEnabledState(
       getStoreSettings().inventoryProfitEnabled,
@@ -739,6 +768,10 @@ export default function ClosingPage() {
     setStatus(getClosingStatusByBusinessDate(date));
     setQuickActionError(null);
     setDeleteError(null);
+  }
+
+  if (salesLoadError) {
+    return <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4"><div className="max-w-md rounded-xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{salesLoadError}</div></main>;
   }
 
   if (

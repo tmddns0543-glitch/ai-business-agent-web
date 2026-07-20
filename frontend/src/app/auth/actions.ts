@@ -4,8 +4,9 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
-import { requireAuthenticatedUser, requireCurrentBusiness } from "@/lib/auth/current-context";
+import { AuthContextError, getCurrentBusiness, requireAuthenticatedUser, requireCurrentBusiness } from "@/lib/auth/current-context";
 import type { AuthActionState } from "@/lib/auth/action-state";
+import { getPostLoginPath, getSignupErrorMessage, isValidEmail, validateSignupInput } from "@/lib/auth/auth-validation";
 import { SupabaseConfigurationError } from "@/lib/supabase/config";
 import { getSafeInternalPath } from "@/lib/supabase/safe-redirect";
 import { createClient } from "@/lib/supabase/server";
@@ -23,7 +24,12 @@ async function getRequestOrigin() {
 }
 
 function configurationState(): AuthActionState {
-  return { status: "error", message: "로그인 서비스 설정이 필요합니다. 관리자에게 문의해 주세요." };
+  return {
+    status: "error",
+    message: process.env.NODE_ENV === "development"
+      ? "Supabase 환경변수가 설정되지 않았습니다. frontend/.env.local의 NEXT_PUBLIC_SUPABASE_URL과 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY를 확인해 주세요."
+      : "로그인 서비스 설정이 필요합니다. 관리자에게 문의해 주세요.",
+  };
 }
 
 export async function loginAction(_state: AuthActionState, formData: FormData): Promise<AuthActionState> {
@@ -31,6 +37,7 @@ export async function loginAction(_state: AuthActionState, formData: FormData): 
   const password = readText(formData, "password");
   const next = getSafeInternalPath(readText(formData, "next"));
   if (!email || !password) return { status: "error", message: "이메일과 비밀번호를 입력해 주세요." };
+  if (!isValidEmail(email)) return { status: "error", message: "올바른 이메일 주소를 입력해 주세요." };
 
   try {
     const supabase = await createClient();
@@ -40,16 +47,29 @@ export async function loginAction(_state: AuthActionState, formData: FormData): 
     if (error instanceof SupabaseConfigurationError) return configurationState();
     return { status: "error", message: "로그인 중 연결 오류가 발생했습니다. 다시 시도해 주세요." };
   }
-  redirect(next);
+  let business;
+  try {
+    business = await getCurrentBusiness();
+  } catch (error) {
+    if (error instanceof AuthContextError) {
+      return {
+        status: "error",
+        message: process.env.NODE_ENV === "development" && error.databaseCode
+          ? `${error.message} (DB code: ${error.databaseCode})`
+          : "사업장 정보를 확인하지 못했습니다. 관리자에게 문의해 주세요.",
+      };
+    }
+    return { status: "error", message: "사업장 정보를 확인하는 중 오류가 발생했습니다." };
+  }
+  redirect(getPostLoginPath(Boolean(business), next));
 }
 
 export async function signupAction(_state: AuthActionState, formData: FormData): Promise<AuthActionState> {
   const email = readText(formData, "email");
   const password = readText(formData, "password");
   const confirmation = readText(formData, "passwordConfirmation");
-  if (!email || !password) return { status: "error", message: "모든 항목을 입력해 주세요." };
-  if (password.length < 8) return { status: "error", message: "비밀번호는 8자 이상으로 입력해 주세요." };
-  if (password !== confirmation) return { status: "error", message: "비밀번호 확인이 일치하지 않습니다." };
+  const validationError = validateSignupInput(email, password, confirmation);
+  if (validationError) return { status: "error", message: validationError };
 
   let hasSession = false;
   try {
@@ -58,15 +78,15 @@ export async function signupAction(_state: AuthActionState, formData: FormData):
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { emailRedirectTo: `${origin}/auth/callback?next=/` },
+      options: { emailRedirectTo: `${origin}/auth/callback?next=/onboarding/business` },
     });
-    if (error) return { status: "error", message: "회원가입을 완료하지 못했습니다. 입력값을 확인해 주세요." };
+    if (error) return { status: "error", message: getSignupErrorMessage(error) };
     hasSession = Boolean(data.session);
   } catch (error) {
     if (error instanceof SupabaseConfigurationError) return configurationState();
     return { status: "error", message: "회원가입 중 연결 오류가 발생했습니다. 잠시 후 다시 시도해 주세요." };
   }
-  if (hasSession) redirect("/");
+  if (hasSession) redirect("/onboarding/business");
   return { status: "success", message: "가입 확인 이메일을 보냈습니다. 이메일에서 인증을 완료한 뒤 로그인해 주세요." };
 }
 

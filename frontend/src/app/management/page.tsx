@@ -11,11 +11,13 @@ import {
   getCurrentInventoryMonth,
 } from "@/lib/inventory/inventory-month";
 import { resolveBeginningInventory } from "@/lib/inventory/resolve-beginning-inventory";
-import { getSalesSettlementByBusinessDate } from "@/lib/settlement/get-sales-settlement-from-storage";
+import { calculateSalesSettlement } from "@/lib/settlement/calculate-sales-settlement";
+import { resolveBusinessFeeSettingsForBusinessDate } from "@/lib/storage/fee-settings-storage";
+import { getSalesRepository } from "@/repositories/sales/get-sales-repository";
+import { salesToStoredSales } from "@/repositories/sales/sales-mapper";
 import { getAllDeliveryTransactions } from "@/lib/storage/delivery-agency-storage";
 import { getAllExpenseTransactions } from "@/lib/storage/expense-by-business-day-storage";
 import { getMonthlyInventoryRecord } from "@/lib/storage/monthly-inventory-storage";
-import { getBusinessDaySalesStorage } from "@/lib/storage/sales-by-business-day-storage";
 import { getStoreSettings } from "@/lib/storage/store-settings-storage";
 import type { InventoryMonth } from "@/types/inventory";
 
@@ -26,28 +28,38 @@ function formatMoney(value: number): string {
 export default function ManagementPage() {
   const [month, setMonth] = useState<InventoryMonth>(getCurrentInventoryMonth());
   const [isLoaded, setIsLoaded] = useState(false);
+  const [sales, setSales] = useState({ grossSales: 0, expectedDeduction: 0 });
+  const [salesError, setSalesError] = useState<string | null>(null);
 
   /* eslint-disable react-hooks/set-state-in-effect -- Monthly LocalStorage data hydrates after mount. */
   useEffect(() => {
-    setIsLoaded(true);
-  }, []);
+    let active = true;
+    setIsLoaded(false);
+    setSalesError(null);
+    getSalesRepository().getByMonth(month)
+      .then((rows) => {
+        if (!active) return;
+        const dates = [...new Set(rows.map((sale) => sale.businessDate))];
+        const total = dates.reduce((accumulator, date) => {
+          const summary = calculateSalesSettlement(
+            salesToStoredSales(rows.filter((sale) => sale.businessDate === date)),
+            resolveBusinessFeeSettingsForBusinessDate(date),
+          );
+          return { grossSales: accumulator.grossSales + summary.total.grossSales, expectedDeduction: accumulator.expectedDeduction + summary.total.expectedDeduction };
+        }, { grossSales: 0, expectedDeduction: 0 });
+        setSales(total);
+        setIsLoaded(true);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setSalesError(error instanceof Error ? error.message : "월 매출을 불러오지 못했습니다.");
+        setIsLoaded(true);
+      });
+    return () => { active = false; };
+  }, [month]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const result = useMemo(() => {
-    const salesDates = Object.keys(getBusinessDaySalesStorage().days).filter(
-      (date) => date.startsWith(`${month}-`),
-    );
-    const sales = salesDates.reduce(
-      (total, date) => {
-        const summary = getSalesSettlementByBusinessDate(date);
-        return {
-          grossSales: total.grossSales + summary.total.grossSales,
-          expectedDeduction:
-            total.expectedDeduction + summary.total.expectedDeduction,
-        };
-      },
-      { grossSales: 0, expectedDeduction: 0 },
-    );
     const expenses = calculateExpenseSummary(
       getAllExpenseTransactions().filter(({ businessDate }) =>
         businessDate.startsWith(`${month}-`),
@@ -94,10 +106,14 @@ export default function ManagementPage() {
           ? null
           : sales.grossSales - totalOperatingCost,
     };
-  }, [month]);
+  }, [month, sales]);
 
   if (!isLoaded) {
     return <main className="flex min-h-screen items-center justify-center bg-slate-100"><p className="text-sm text-slate-500">경영성과를 불러오는 중</p></main>;
+  }
+
+  if (salesError) {
+    return <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4"><p className="max-w-md rounded-xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{salesError}</p></main>;
   }
 
   const materialLabel =

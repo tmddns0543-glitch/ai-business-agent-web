@@ -26,6 +26,8 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 
 구형 프로젝트에서는 publishable key 대신 anon key 값을 사용할 수 있다. `service_role` key는 브라우저 환경변수나 저장소에 넣지 않는다.
 
+파일 복사, Dashboard 확인 위치와 개발 서버 재시작 절차는 `docs/26_Supabase_Environment_Setup.md`를 따른다.
+
 ## Migration 실행
 
 Supabase Dashboard의 SQL Editor에서 다음 파일 전체를 실행한다.
@@ -80,13 +82,9 @@ membership 정책의 재귀를 피하기 위해 제한된 `private` schema의 `s
 
 ## 신규 사용자 생성
 
-`auth.users` insert trigger가 같은 트랜잭션 안에서 다음을 생성한다.
+보완 migration 적용 후 `auth.users` insert trigger는 `profiles`만 생성한다. 로그인 사용자에게 active membership이 없으면 `/onboarding/business`로 이동한다. `create_initial_business()` RPC가 사용자별 lock 아래 사업장과 owner membership을 한 트랜잭션에서 생성한다.
 
-1. `profiles`
-2. 이름이 `내 가게`인 기본 `businesses`
-3. `owner` 역할의 `business_memberships`
-
-복구용 `ensure_current_user_business()` RPC는 현재 인증 사용자만 대상으로 동작하며 advisory transaction lock과 conflict 처리를 사용해 중복 생성을 방지한다.
+전체 적용과 수동 검증 절차는 `docs/25_Authentication_Business_Onboarding.md`를 따른다.
 
 ## 개발 실행 및 검증
 
